@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# PyCharm / IDE
+.idea/
+.vscode/
+
+# Windows
+Thumbs.db
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Office temporary files
+~$*.docx
+~$*.xlsx
+
+# Output folders
+output/
+build/
+dist/
+
+# Large/raw data folders
+data/
+raw-data/
+exports/
+images/
+maps/
+
+# Large scientific/image files
+*.tif
+*.tiff
+*.bmp
+*.jpg
+*.jpeg
+*.png
+*.zip
+*.7z
