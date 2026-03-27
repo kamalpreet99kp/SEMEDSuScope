@@ -164,20 +164,25 @@ def classify_row(row):
     if Cu >= 5 and Cu <= 45 and Fe >= 15 and S >= 12 and (ratio is None or ratio <= 1.35):
         return "Cpy_Cubanite"
 
-    if Cu >= 45 and Cu <= 68 and Fe >= 5 and Fe <= 13.5 and S >= 15 and (ratio is None or (1.55 <= ratio <= 2.55)):
+    if Cu >= 45 and Cu <= 68 and Fe >= 5 and Fe <= 17 and S >= 15 and (ratio is None or (1.55 <= ratio <= 2.70)):
         return "Bornite"
 
-    if Cu >= 65 and Fe < 5 and S >= 15 and (ratio is None or ratio >= 2.6):
+    if Cu >= 70 and Fe < 5 and S >= 12 and (ratio is None or ratio >= 2.8):
         return "Digenite_Chalcocite"
 
-    if Cu >= 55 and Cu < 70 and Fe < 5 and S >= 18 and (ratio is None or ratio < 2.6):
+    if Cu >= 55 and Cu < 70 and Fe < 5 and S >= 15 and (ratio is None or ratio < 3.6):
         return "Covellite"
 
     # Tightened mixed logic
     if Cu >= 5 and S >= 12:
         # Fe-rich side
         if Fe >= 13.5:
-            return "Cpy_Cubanite"
+            if ratio is not None:
+                if ratio < 1.55:
+                    return "Cpy_Cubanite"
+                if ratio <= 2.70 and Cu >= 45:
+                    return "Bornite"
+            return "Mixed_Cu_Sulfide"
 
         if 5 <= Fe < 13.5:
             if ratio is not None:
@@ -190,9 +195,9 @@ def classify_row(row):
         # Fe-poor side
         if Fe < 5:
             if ratio is not None:
-                if ratio >= 2.25 and Cu >= 55:
+                if Cu >= 70 and ratio >= 2.8:
                     return "Digenite_Chalcocite"
-                if ratio < 2.25 and Cu >= 45:
+                if Cu >= 55 and ratio < 3.6:
                     return "Covellite"
             return "Mixed_Cu_Sulfide"
 
@@ -233,19 +238,24 @@ def second_pass_normalized_resolve(row):
     if nCu >= 5 and nCu <= 45 and nFe >= 15 and nS >= 12 and (ratio is None or ratio <= 1.35):
         return "Cpy_Cubanite"
 
-    if nCu >= 45 and nCu <= 68 and nFe >= 5 and nFe <= 13.5 and nS >= 15 and (ratio is None or (1.55 <= ratio <= 2.55)):
+    if nCu >= 45 and nCu <= 68 and nFe >= 5 and nFe <= 17 and nS >= 15 and (ratio is None or (1.55 <= ratio <= 2.70)):
         return "Bornite"
 
-    if nCu >= 65 and nFe < 5 and nS >= 15 and (ratio is None or ratio >= 2.6):
+    if nCu >= 70 and nFe < 5 and nS >= 12 and (ratio is None or ratio >= 2.8):
         return "Digenite_Chalcocite"
 
-    if nCu >= 55 and nCu < 70 and nFe < 5 and nS >= 18 and (ratio is None or ratio < 2.6):
+    if nCu >= 55 and nCu < 70 and nFe < 5 and nS >= 15 and (ratio is None or ratio < 3.6):
         return "Covellite"
 
     # Tightened mixed logic again
     if nCu >= 5 and nS >= 12:
         if nFe >= 13.5:
-            return "Cpy_Cubanite"
+            if ratio is not None:
+                if ratio < 1.55:
+                    return "Cpy_Cubanite"
+                if ratio <= 2.70 and nCu >= 45:
+                    return "Bornite"
+            return None
 
         if 5 <= nFe < 13.5:
             if ratio is not None:
@@ -257,9 +267,9 @@ def second_pass_normalized_resolve(row):
 
         if nFe < 5:
             if ratio is not None:
-                if ratio >= 2.25 and nCu >= 55:
+                if nCu >= 70 and ratio >= 2.8:
                     return "Digenite_Chalcocite"
-                if ratio < 2.25 and nCu >= 45:
+                if nCu >= 55 and ratio < 3.6:
                     return "Covellite"
             return None
 
