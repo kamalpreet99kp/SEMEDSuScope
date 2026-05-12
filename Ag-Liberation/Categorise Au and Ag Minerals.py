@@ -23,7 +23,6 @@ def v(row, col):
 
 TRACE = 5.0
 MINOR = 12.0
-AUAG_CUTOFF = 2.0
 
 
 def classify_mineral(row):
@@ -143,7 +142,7 @@ def classify_mineral(row):
     if ag > 1.4 and (fe > 10 or cu > 10) and bi < 40:
         return "Ag Associations with Sulphides"
 
-    if ag > AUAG_CUTOFF or au > AUAG_CUTOFF:
+    if ag > 1.4:
         return "All Others"
 
     return None
@@ -215,39 +214,29 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         if cat in classified_sheets:
             classified_sheets[cat].to_excel(writer, sheet_name=cat, index=False)
 
-    df_auag = df[(df["Ag (Wt%)"] > AUAG_CUTOFF) | (df["Au (Wt%)"] > AUAG_CUTOFF)]
-    raw_auag_count = len(df_auag)
-    raw_auag_area = df_auag[area_column].sum()
+    df_ag = df[df["Ag (Wt%)"] > 1.4]
+    raw_ag_count = len(df_ag)
+    raw_ag_area = df_ag[area_column].sum()
 
-    classified_concat = pd.concat(classified_sheets.values(), ignore_index=True) if classified_sheets else pd.DataFrame()
     classified_total_count = sum(len(classified_sheets[k]) for k in classified_sheets.keys())
     classified_total_area = sum(classified_sheets[k][area_column].sum() for k in classified_sheets.keys())
 
-    duplicate_metric = "N/A"
-    if not classified_concat.empty:
-        duplicate_keys = [c for c in ["Feature", "Row"] if c in classified_concat.columns]
-        if duplicate_keys:
-            duplicate_count = int(classified_concat.duplicated(subset=duplicate_keys, keep=False).sum())
-            duplicate_metric = f"✅ No duplicates" if duplicate_count == 0 else f"❌ Duplicates found: {duplicate_count}"
-
     integrity_data = {
         "Metric": [
-            f"Rows with Ag or Au > {AUAG_CUTOFF}% in Raw Data",
+            "Rows with Ag > 1.4% in Raw Data",
             "Total rows in classified sheets (non-empty only)",
-            f"Area in Raw Data (Ag or Au > {AUAG_CUTOFF}%)",
+            "Area in Raw Data (Ag > 1.4%)",
             "Area in classified sheets (non-empty only)",
             "Area Match",
-            "Row Count Match",
-            "Feature/Row duplicate check in classified sheets"
+            "Row Count Match"
         ],
         "Value": [
-            raw_auag_count,
+            raw_ag_count,
             classified_total_count,
-            round(raw_auag_area, 4),
+            round(raw_ag_area, 4),
             round(classified_total_area, 4),
-            "✅ Match" if abs(raw_auag_area - classified_total_area) < 0.01 else "❌ Mismatch",
-            "✅ Match" if raw_auag_count == classified_total_count else "❌ Mismatch",
-            duplicate_metric
+            "✅ Match" if abs(raw_ag_area - classified_total_area) < 0.01 else "❌ Mismatch",
+            "✅ Match" if raw_ag_count == classified_total_count else "❌ Mismatch"
         ]
     }
     pd.DataFrame(integrity_data).to_excel(writer, sheet_name="Integrity Check", index=False)
