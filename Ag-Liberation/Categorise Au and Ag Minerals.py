@@ -23,7 +23,7 @@ def v(row, col):
 
 TRACE = 5.0
 MINOR = 12.0
-
+AUAG_CUTOFF = 2.0
 
 def classify_mineral(row):
     ag = v(row, "Ag (Wt%)")
