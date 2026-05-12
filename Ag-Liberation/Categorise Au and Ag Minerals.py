@@ -40,6 +40,11 @@ def classify_mineral(row):
     o = v(row, "O (Wt%)")
 
     # ========================================================
+
+    # Global gate for Au+Ag workflow
+    if ag <= AUAG_CUTOFF and au <= AUAG_CUTOFF:
+        return None
+
     # AU MINERALS FIRST
     # ========================================================
 
@@ -214,29 +219,29 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         if cat in classified_sheets:
             classified_sheets[cat].to_excel(writer, sheet_name=cat, index=False)
 
-    df_ag = df[df["Ag (Wt%)"] > 1.4]
-    raw_ag_count = len(df_ag)
-    raw_ag_area = df_ag[area_column].sum()
+    df_auag = df[(df["Ag (Wt%)"] > AUAG_CUTOFF) | (df["Au (Wt%)"] > AUAG_CUTOFF)]
+    raw_auag_count = len(df_auag)
+    raw_auag_area = df_auag[area_column].sum()
 
     classified_total_count = sum(len(classified_sheets[k]) for k in classified_sheets.keys())
     classified_total_area = sum(classified_sheets[k][area_column].sum() for k in classified_sheets.keys())
 
     integrity_data = {
         "Metric": [
-            "Rows with Ag > 1.4% in Raw Data",
+            f"Rows with Ag or Au > {AUAG_CUTOFF}% in Raw Data",
             "Total rows in classified sheets (non-empty only)",
-            "Area in Raw Data (Ag > 1.4%)",
+            f"Area in Raw Data (Ag or Au > {AUAG_CUTOFF}%)",
             "Area in classified sheets (non-empty only)",
             "Area Match",
             "Row Count Match"
         ],
         "Value": [
-            raw_ag_count,
+            raw_auag_count,
             classified_total_count,
-            round(raw_ag_area, 4),
+            round(raw_auag_area, 4),
             round(classified_total_area, 4),
-            "✅ Match" if abs(raw_ag_area - classified_total_area) < 0.01 else "❌ Mismatch",
-            "✅ Match" if raw_ag_count == classified_total_count else "❌ Mismatch"
+            "✅ Match" if abs(raw_auag_area - classified_total_area) < 0.01 else "❌ Mismatch",
+            "✅ Match" if raw_auag_count == classified_total_count else "❌ Mismatch"
         ]
     }
     pd.DataFrame(integrity_data).to_excel(writer, sheet_name="Integrity Check", index=False)
