@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import tkinter as tk
 from tkinter import filedialog
-import re
 
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Alignment, Font, Border, Side
@@ -11,12 +10,6 @@ from openpyxl.styles import PatternFill, Alignment, Font, Border, Side
 def v(row, col):
     x = row.get(col, 0)
     return 0 if pd.isna(x) else x
-
-
-def excel_safe_sheet_name(name):
-    """Excel sheets cannot contain: \\ / ? * [ ] : and max len is 31."""
-    cleaned = re.sub(r'[\\/*?:\[\]]', "-", str(name)).strip()
-    return cleaned[:31] if cleaned else "Sheet"
 
 
 TRACE = 2.0
@@ -239,7 +232,7 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
 
     for cat in all_categories_in_order:
         if cat in classified_sheets:
-            classified_sheets[cat].to_excel(writer, sheet_name=excel_safe_sheet_name(cat), index=False)
+            classified_sheets[cat].to_excel(writer, sheet_name=cat, index=False)
 
     df_focus = df[(df["Ag (Wt%)"] > AUAG_CUTOFF) | (df["Au (Wt%)"] > AUAG_CUTOFF) |
                   (df.get("Pb (Wt%)", 0) > AUAG_CUTOFF) | (df["Bi (Wt%)"] > AUAG_CUTOFF) |

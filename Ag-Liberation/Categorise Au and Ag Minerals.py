@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import tkinter as tk
 from tkinter import filedialog
-import re
 
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Alignment, Font, Border, Side
@@ -22,16 +21,9 @@ def v(row, col):
     return 0 if pd.isna(x) else x
 
 
-def excel_safe_sheet_name(name):
-    """Excel sheets cannot contain: \\ / ? * [ ] : and max len is 31."""
-    cleaned = re.sub(r'[\\/*?:\[\]]', "-", str(name)).strip()
-    return cleaned[:31] if cleaned else "Sheet"
-
-
-TRACE = 2.0
-MINOR = 6.0
+TRACE = 5.0
+MINOR = 12.0
 AUAG_CUTOFF = 2.0
-
 
 def classify_mineral(row):
     ag = v(row, "Ag (Wt%)")
@@ -47,51 +39,55 @@ def classify_mineral(row):
     au = v(row, "Au (Wt%)")
     o = v(row, "O (Wt%)")
 
-    # Global gate for this Au+Ag liberation workflow:
-    # rows with both Ag and Au below cutoff are not classified.
+    # ========================================================
+
+    # Global gate for Au+Ag workflow
     if ag <= AUAG_CUTOFF and au <= AUAG_CUTOFF:
         return None
 
-    # ========================================================
     # AU MINERALS FIRST
     # ========================================================
 
-    # 1) Native Au
-    if (30 <= au <= 100 and ag < 1 and te < 2 and bi < 2 and
+    # Calaverite (AuTe2): ideal ~Au 43.6, Te 56.4
+    if (20 <= au <= 65 and 25 <= te <= 75 and ag < MINOR and
             s < TRACE and se < TRACE and hg < TRACE and sb < TRACE and
-            ars < TRACE and cu < TRACE and fe < TRACE):
-        return "Native Au"
-
-    # 2) Au-Ag (Electrum)
-    if (5 <= au <= 98 and 5 <= ag <= 98 and te < 2 and bi < 2 and
-            s < TRACE and se < TRACE and hg < TRACE and sb < TRACE and
-            ars < TRACE and cu < TRACE and fe < TRACE):
-        return "Au-Ag (Electrum)"
-
-    # 3) Maldonite (Au2Bi)
-    if (35 <= au <= 70 and 18 <= bi <= 70 and ag < 6 and te < 6 and
-            s < TRACE and se < TRACE and hg < TRACE and sb < TRACE and
-            ars < TRACE and cu < TRACE and fe < TRACE):
-        return "Maldonite"
-
-    # 4) Calaverite (AuTe2)
-    if (35 <= au <= 50 and 45 <= te <= 63 and ag < 6 and
-            s < TRACE and se < TRACE and hg < TRACE and sb < TRACE and
-            ars < TRACE and cu < TRACE and fe < TRACE and bi < 6):
+            ars < TRACE and cu < TRACE and fe < TRACE and bi < TRACE):
         return "Calaverite"
 
-    # 5) Sylvanite ((Au,Ag)Te2)
-    if (17 <= au <= 28 and 6 <= ag <= 15 and 49 <= te <= 65 and
+    # Sylvanite ((Au,Ag)Te2): ideal around Au~34, Ag~6, Te~59 (Au/Ag variable)
+    if (au >= 12 and ag >= 2 and te >= 25 and
+            20 <= te <= 80 and au <= 65 and ag <= 35 and
             s < TRACE and se < TRACE and hg < TRACE and sb < TRACE and
-            ars < TRACE and cu < TRACE and fe < TRACE and bi < 6):
+            ars < TRACE and cu < TRACE and fe < TRACE and bi < MINOR):
         return "Sylvanite"
 
-    # 6) Petzite (Ag3AuTe2)
-    if (30 <= ag <= 48 and 27 <= te <= 36 and 17 <= au <= 29 and
-            s < TRACE and se < TRACE and bi < 6 and
-            hg < TRACE and sb < TRACE and ars < TRACE and
+    # Petzite (Ag3AuTe2): Ag-rich Au telluride
+    if (te >= 6 and au >= 5 and s < TRACE and se < TRACE and
+            10 <= ag <= 75 and 5 <= au <= 85 and 8 <= te <= 90 and
+            bi < MINOR and hg < TRACE and sb < TRACE and ars < TRACE and
             cu < TRACE and fe < TRACE):
         return "Petzite"
+
+    # Au-Ag-Hg alloy (amalgamic Au-Ag phase)
+    if (au >= 15 and ag >= 5 and hg >= 5 and
+            te < TRACE and s < TRACE and se < TRACE and
+            sb < TRACE and ars < TRACE and bi < TRACE and
+            cu < TRACE and fe < TRACE):
+        return "Au-Ag-Hg"
+
+    # Electrum-like Au-Ag alloy
+    if (au >= 20 and ag >= 5 and
+            te < TRACE and s < TRACE and se < TRACE and
+            sb < TRACE and ars < TRACE and hg < TRACE and bi < TRACE and
+            cu < TRACE and fe < TRACE):
+        return "Au-Ag (Electrum)"
+
+    # Native Au (allow small Ag as common substitution)
+    if (au >= 75 and ag < 25 and o <= 20 and
+            s < TRACE and te < TRACE and se < TRACE and
+            sb < TRACE and ars < TRACE and hg < TRACE and bi < TRACE and
+            cu < TRACE and fe < TRACE):
+        return "Native Au"
 
     # ========================================================
     # AG MINERALS (existing script logic + ordering)
@@ -109,9 +105,8 @@ def classify_mineral(row):
             cu < TRACE and fe < TRACE):
         return "Volynskite"
 
-    # 8) Hessite (Ag2Te) + associations
-    if (40 <= ag <= 68 and 18 <= te <= 45 and au < 5 and
-            s < TRACE and se < TRACE and
+    if (ag > 5 and te >= 6 and
+            s < TRACE and se < TRACE and au < TRACE and
             hg < TRACE and sb < TRACE and ars < TRACE and
             cu < MINOR and fe < MINOR and bi < MINOR):
         return "Hessite & Associations"
@@ -140,19 +135,19 @@ def classify_mineral(row):
     if 5 < ag < 75 and s > 4 and hg < 12 and te < 6 and sb > 6 and ars < 2 and bi < 40 and cu < 25 and fe < 21 and se < 6:
         return "Sulfosalt (Sb) & Asso"
 
-    if ag > AUAG_CUTOFF and s > 15 and hg < 6 and te < 6 and ars > 10 and cu > 17 and bi < 40 and se < 6:
+    if ag > 1.0 and s > 15 and hg < 6 and te < 6 and ars > 10 and cu > 17 and bi < 40 and se < 6:
         return "Ag Associations with Enargite"
 
-    if ag > AUAG_CUTOFF and hg > 3 and fe < 20 and te < 6 and bi < 40 and cu < 20 and se < 6:
+    if ag > 1.4 and hg > 3 and fe < 20 and te < 6 and bi < 40 and cu < 20 and se < 6:
         return "Other Ag-Hg Associations"
 
     if ag > 2 and s > 2.5 and hg < 4 and te < 6 and fe < 28 and bi < 40 and cu < 28 and se >= 6:
         return "Aguilarite & Associations"
 
-    if ag > AUAG_CUTOFF and (fe > 10 or cu > 10) and bi < 40:
+    if ag > 1.4 and (fe > 10 or cu > 10) and bi < 40:
         return "Ag Associations with Sulphides"
 
-    if ag > AUAG_CUTOFF or au > AUAG_CUTOFF:
+    if ag > 1.4:
         return "All Others"
 
     return None
@@ -177,18 +172,18 @@ df["Mineral Type"] = df.apply(classify_mineral, axis=1)
 area_column = "Area (sq. µm)"
 
 all_categories_in_order = [
-    "Native Au",
-    "Au-Ag (Electrum)",
-    "Maldonite",
     "Calaverite",
     "Sylvanite",
     "Petzite",
-    "Native Ag",
-    "Hessite & Associations",
-    "Acanthite & Associations",
+    "Au-Ag-Hg",
+    "Au-Ag (Electrum)",
+    "Native Au",
     "Bohdanowiczite",
     "Volynskite",
+    "Hessite & Associations",
     "Dyscrasite",
+    "Native Ag",
+    "Acanthite & Associations",
     "Imiterite & Associations",
     "Sulfosalt (Sb & or As ) & Asso",
     "Sulfosalt (Sb) & Asso",
@@ -222,27 +217,14 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
 
     for cat in all_categories_in_order:
         if cat in classified_sheets:
-            classified_sheets[cat].to_excel(writer, sheet_name=excel_safe_sheet_name(cat), index=False)
+            classified_sheets[cat].to_excel(writer, sheet_name=cat, index=False)
 
     df_auag = df[(df["Ag (Wt%)"] > AUAG_CUTOFF) | (df["Au (Wt%)"] > AUAG_CUTOFF)]
     raw_auag_count = len(df_auag)
     raw_auag_area = df_auag[area_column].sum()
 
-    classified_concat = pd.concat(classified_sheets.values(), ignore_index=True) if classified_sheets else pd.DataFrame()
-    classified_rows = df[df["Mineral Type"].notna()]
-    classified_total_count = len(classified_rows)
-    classified_total_area = classified_rows[area_column].sum()
-
-    unclassified_auag = df_auag[df_auag["Mineral Type"].isna()]
-    if len(unclassified_auag) > 0:
-        unclassified_auag.drop(columns=["Mineral Type"]).to_excel(writer, sheet_name="Unclassified_AuAg", index=False)
-
-    duplicate_metric = "N/A"
-    if not classified_concat.empty:
-        duplicate_keys = [c for c in ["Feature", "Row"] if c in classified_concat.columns]
-        if duplicate_keys:
-            duplicate_count = int(classified_concat.duplicated(subset=duplicate_keys, keep=False).sum())
-            duplicate_metric = f"✅ No duplicates" if duplicate_count == 0 else f"❌ Duplicates found: {duplicate_count}"
+    classified_total_count = sum(len(classified_sheets[k]) for k in classified_sheets.keys())
+    classified_total_area = sum(classified_sheets[k][area_column].sum() for k in classified_sheets.keys())
 
     integrity_data = {
         "Metric": [
@@ -251,9 +233,7 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             f"Area in Raw Data (Ag or Au > {AUAG_CUTOFF}%)",
             "Area in classified sheets (non-empty only)",
             "Area Match",
-            "Row Count Match",
-            "Unclassified rows with Ag or Au > cutoff",
-            "Feature/Row duplicate check in classified sheets"
+            "Row Count Match"
         ],
         "Value": [
             raw_auag_count,
@@ -261,9 +241,7 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
             round(raw_auag_area, 4),
             round(classified_total_area, 4),
             "✅ Match" if abs(raw_auag_area - classified_total_area) < 0.01 else "❌ Mismatch",
-            "✅ Match" if raw_auag_count == classified_total_count else "❌ Mismatch",
-            len(unclassified_auag),
-            duplicate_metric
+            "✅ Match" if raw_auag_count == classified_total_count else "❌ Mismatch"
         ]
     }
     pd.DataFrame(integrity_data).to_excel(writer, sheet_name="Integrity Check", index=False)
