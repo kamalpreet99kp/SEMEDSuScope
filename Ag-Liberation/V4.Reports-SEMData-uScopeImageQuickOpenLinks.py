@@ -52,11 +52,10 @@ def clean_key(value: str) -> str:
     return s
 
 
-def choose_root_folder(root: tk.Tk) -> Path:
-    selected = filedialog.askdirectory(
-        parent=root,
-        title="Select parent folder containing reports + cropped images",
-    )
+def choose_root_folder() -> Path:
+    root = tk.Tk()
+    root.withdraw()
+    selected = filedialog.askdirectory(title="Select parent folder containing reports + cropped images")
     if not selected:
         raise RuntimeError("No folder selected")
     return Path(selected)
@@ -190,54 +189,47 @@ def process_workbook(wb_path: Path, exact_index, clean_index):
 
 
 def main():
-    root = tk.Tk()
-    root.withdraw()
-
     try:
+        root_dir = choose_root_folder()
+    except Exception as exc:
+        print(f"Cancelled: {exc}")
+        return
+
+    print(f"Selected folder: {root_dir}")
+
+    exact_index, clean_index = build_cropped_image_index(root_dir)
+    print(f"Indexed images in cropped folders: {len(exact_index)}")
+
+    workbooks = find_workbooks(root_dir)
+    if not workbooks:
+        messagebox.showwarning("No workbooks", "No .xlsx/.xlsm workbooks found.")
+        return
+
+    print(f"Found workbooks: {len(workbooks)}")
+
+    processed = 0
+    created_files = 0
+
+    for wb_path in workbooks:
+        print(f"\nProcessing: {wb_path}")
         try:
-            root_dir = choose_root_folder(root)
+            out, sheet_count, linked, missing = process_workbook(wb_path, exact_index, clean_index)
+            processed += 1
+            if out is None:
+                print("  No sheets with both 'Image' and 'Micro X' found. Skipped.")
+                continue
+            created_files += 1
+            print(f"  Saved: {out}")
+            print(f"  Sheets updated: {sheet_count}, links added: {linked}, missing: {missing}")
         except Exception as exc:
-            print(f"Cancelled: {exc}")
-            return
+            print(f"  ERROR: {exc}")
 
-        print(f"Selected folder: {root_dir}")
-
-        exact_index, clean_index = build_cropped_image_index(root_dir)
-        print(f"Indexed images in cropped folders: {len(exact_index)}")
-
-        workbooks = find_workbooks(root_dir)
-        if not workbooks:
-            messagebox.showwarning("No workbooks", "No .xlsx/.xlsm workbooks found.", parent=root)
-            return
-
-        print(f"Found workbooks: {len(workbooks)}")
-
-        processed = 0
-        created_files = 0
-
-        for wb_path in workbooks:
-            print(f"\nProcessing: {wb_path}")
-            try:
-                out, sheet_count, linked, missing = process_workbook(wb_path, exact_index, clean_index)
-                processed += 1
-                if out is None:
-                    print("  No sheets with both 'Image' and 'Micro X' found. Skipped.")
-                    continue
-                created_files += 1
-                print(f"  Saved: {out}")
-                print(f"  Sheets updated: {sheet_count}, links added: {linked}, missing: {missing}")
-            except Exception as exc:
-                print(f"  ERROR: {exc}")
-
-        messagebox.showinfo(
-            "Done",
-            f"Processed workbooks: {processed}\n"
-            f"Output files created: {created_files}\n"
-            f"Root folder: {root_dir}",
-            parent=root,
-        )
-    finally:
-        root.destroy()
+    messagebox.showinfo(
+        "Done",
+        f"Processed workbooks: {processed}\n"
+        f"Output files created: {created_files}\n"
+        f"Root folder: {root_dir}",
+    )
 
 
 if __name__ == "__main__":
