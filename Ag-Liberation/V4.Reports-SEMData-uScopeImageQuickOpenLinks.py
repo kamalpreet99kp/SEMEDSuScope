@@ -326,29 +326,27 @@ def get_header_map(ws):
 
 def shrink_columns_keep_visible(ws):
     for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
+        col_dim = ws.column_dimensions[col_letter]
+        if bool(getattr(col_dim, "hidden", False)):
+            # Preserve hidden columns exactly as hidden with no width edits.
+            continue
+
         header_val = ws.cell(row=1, column=col_idx).value
         header_text = str(header_val).strip() if header_val is not None else ""
+        if header_text == TARGET_IMAGE_HEADER:
+            # Keep existing Image column width so embedded image display remains unchanged.
+            continue
 
         # Wrap header to preserve readability while keeping narrow width.
         header_cell = ws.cell(row=1, column=col_idx)
         header_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
+        # Keep width close to the first header word so many columns fit on one screen.
         header_words = [w for w in re.split(r"\s+", header_text) if w]
-        header_word_width = max((len(w) for w in header_words), default=len(header_text))
-
-        data_max = 0
-        max_r = min(ws.max_row, SAMPLE_ROWS_FOR_WIDTH)
-        for r in range(2, max_r + 1):
-            v = ws.cell(row=r, column=col_idx).value
-            if v is None:
-                continue
-            txt = str(v)
-            data_max = max(data_max, len(txt))
-
-        desired = max(header_word_width, min(data_max, MAX_COL_WIDTH))
-        desired = max(MIN_COL_WIDTH, min(MAX_COL_WIDTH, desired + 1))
-
-        ws.column_dimensions[get_column_letter(col_idx)].width = desired
+        first_word = header_words[0] if header_words else header_text
+        desired = max(MIN_COL_WIDTH, min(MAX_COL_WIDTH, len(first_word) + 1))
+        ws.column_dimensions[col_letter].width = desired
 
 
 def add_links_to_sheet(ws, cropped_dir: Path) -> Tuple[int, int, str]:
@@ -390,6 +388,7 @@ def add_links_to_sheet(ws, cropped_dir: Path) -> Tuple[int, int, str]:
         cell.alignment = Alignment(horizontal="center", vertical="center")
         linked += 1
 
+    ws.freeze_panes = "A2"
     shrink_columns_keep_visible(ws)
     return linked, missing, "OK"
 
