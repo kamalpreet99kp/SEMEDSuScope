@@ -60,6 +60,18 @@ def canonical_key(s: str) -> str:
     return s.strip("_")
 
 
+def canonical_variants(s: str) -> List[str]:
+    base = canonical_key(s)
+    if not base:
+        return []
+    variants = {base}
+    variants.add(base.replace("_and_", "_"))
+    variants.add(base.replace("_", ""))
+    variants.add(base.replace("_", "and"))
+    variants.add(base.replace("and", ""))
+    return [v for v in variants if v]
+
+
 def normalize_text(value: str) -> str:
     return re.sub(r"\s+", "", str(value or "").strip().lower())
 
@@ -148,15 +160,35 @@ def choose_sheets_listbox(root: tk.Tk, sheet_names: List[str]) -> Set[str]:
     return result["value"]
 
 
-def choose_sheet_folder_pairs(root: tk.Tk, sheet_names: List[str], folder_map: Dict[str, Path]) -> List[Tuple[str, Path]]:
+def resolve_folder_for_sheet(sheet_name: str, folder_map: Dict[str, Path]) -> Optional[Path]:
+    sheet_key = canonical_key(sheet_name)
+    if sheet_key in folder_map:
+        return folder_map[sheet_key]
+    for v in canonical_variants(sheet_name):
+        if v in folder_map:
+            return folder_map[v]
+    for fk, fp in folder_map.items():
+        if sheet_key and (sheet_key in fk or fk in sheet_key):
+            return fp
+    return None
+
+
+def choose_sheet_folder_pairs(
+    root: tk.Tk,
+    sheet_names: List[str],
+    folder_map: Dict[str, Path],
+    logger: LiveLogger,
+) -> List[Tuple[str, Path]]:
     """Show checkbox GUI of sheet<->folder matches and return selected pairs."""
     pairs = []
     for sheet in sheet_names:
-        folder = folder_map.get(canonical_key(sheet))
+        folder = resolve_folder_for_sheet(sheet, folder_map)
         if folder is not None:
             pairs.append((sheet, folder))
 
+    logger.write(f"Sheets with matched folders: {len(pairs)} / {len(sheet_names)}")
     if not pairs:
+        logger.write("No sheet/folder matches found.")
         return []
 
     win = tk.Toplevel(root)
@@ -367,7 +399,7 @@ def main():
         folder_map = build_category_folder_map(root_dir)
         logger.write(f"Matched category folders with 'cropped': {len(folder_map)}")
 
-        selected_pairs = choose_sheet_folder_pairs(root, wb.sheetnames, folder_map)
+        selected_pairs = choose_sheet_folder_pairs(root, wb.sheetnames, folder_map, logger)
         if not selected_pairs:
             messagebox.showwarning("No categories selected", "No sheet/folder categories were selected for processing.", parent=root)
             logger.write("No categories selected. Exiting.")
