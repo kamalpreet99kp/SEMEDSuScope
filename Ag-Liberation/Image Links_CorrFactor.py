@@ -137,12 +137,9 @@ def choose_pairs_gui(root: tk.Tk, pairs: List[Tuple[str, Path]], logger: LiveLog
     if not pairs:
         return []
 
-    win = tk.Toplevel(root)
+    win = tk.Tk()
     win.title("Select categories to process")
     win.geometry("920x650")
-    win.lift()
-    win.attributes("-topmost", True)
-    win.after(250, lambda: win.attributes("-topmost", False))
 
     tk.Label(win, text="Select categories (sheet + folder) to process", anchor="w").pack(fill="x", padx=10, pady=8)
 
@@ -161,7 +158,7 @@ def choose_pairs_gui(root: tk.Tk, pairs: List[Tuple[str, Path]], logger: LiveLog
 
     vars_ = []
     for i, (sheet, folder) in enumerate(pairs, start=1):
-        v = tk.BooleanVar(master=win, value=True)
+        v = tk.BooleanVar(value=True)
         vars_.append(v)
         tk.Checkbutton(frame, variable=v).grid(row=i, column=0, sticky="w")
         tk.Label(frame, text=sheet).grid(row=i, column=1, sticky="w", padx=8)
@@ -193,9 +190,11 @@ def choose_pairs_gui(root: tk.Tk, pairs: List[Tuple[str, Path]], logger: LiveLog
     tk.Button(btn, text="Cancel", command=cancel).pack(side="right", padx=5)
 
     win.protocol("WM_DELETE_WINDOW", cancel)
-    win.transient(root)
-    win.grab_set()
-    root.wait_window(win)
+    win.mainloop()
+    try:
+        win.destroy()
+    except Exception:
+        pass
     return result["pairs"]
 
 
@@ -238,22 +237,24 @@ def process_sheet(ws, cropped_dir: Path):
     if TARGET_IMAGE_HEADER not in headers or TARGET_MICROX_HEADER not in headers:
         return 0, 0, "Missing Image/Micro X headers"
 
-    # Preserve hidden states by original column index (handles duplicate headers reliably).
-    hidden_indices = set()
-    for col_idx in range(1, ws.max_column + 1):
-        if ws.column_dimensions[get_column_letter(col_idx)].hidden:
-            hidden_indices.add(col_idx)
+    # Preserve hidden states by header names (more stable than index when inserting columns)
+    hidden_by_header = {}
+    for cell in ws[1]:
+        if cell.value is None:
+            continue
+        h = str(cell.value).strip()
+        hidden_by_header.setdefault(h, False)
+        if ws.column_dimensions[get_column_letter(cell.column)].hidden:
+            hidden_by_header[h] = True
 
     image_col = headers[TARGET_IMAGE_HEADER][0]
     micro_col = headers[TARGET_MICROX_HEADER][0]
 
-    inserted_count = 0
     if LINK_HEADER in headers:
         link_col = headers[LINK_HEADER][0]
     else:
         insert_at = image_col + 1
-        inserted_count = 1 + len(NEW_HEADERS)
-        ws.insert_cols(insert_at, amount=inserted_count)
+        ws.insert_cols(insert_at, amount=1 + len(NEW_HEADERS))
         ws.cell(row=1, column=insert_at).value = LINK_HEADER
         for i, h in enumerate(NEW_HEADERS, start=1):
             ws.cell(row=1, column=insert_at + i).value = h
@@ -306,14 +307,13 @@ def process_sheet(ws, cropped_dir: Path):
     freeze_top_header_row(ws)
     shrink_columns_keep_visible(ws)
 
-    # Re-apply hidden states after insertion with index-shift compensation.
-    if hidden_indices:
-        for old_idx in hidden_indices:
-            if inserted_count and old_idx >= link_col:
-                new_idx = old_idx + inserted_count
-            else:
-                new_idx = old_idx
-            ws.column_dimensions[get_column_letter(new_idx)].hidden = True
+    # Re-apply hidden by header label
+    headers_now = get_header_positions(ws)
+    for h, hidden in hidden_by_header.items():
+        if not hidden:
+            continue
+        for col_idx in headers_now.get(h, []):
+            ws.column_dimensions[get_column_letter(col_idx)].hidden = True
 
     return linked, missing, "OK"
 
