@@ -192,7 +192,9 @@ def choose_sheet_folder_pairs(
         return []
 
     logger.write("Opening category selection window...")
-    win = tk.Toplevel(root)
+    # Use an independent Tk window for selection to avoid hidden-modal deadlocks
+    # observed in some Windows + IDE combinations with withdrawn parent roots.
+    win = tk.Tk()
     win.title("Select categories to process")
     win.geometry("860x640")
     win.lift()
@@ -235,7 +237,7 @@ def choose_sheet_folder_pairs(
         tk.Label(inner, text=sheet, anchor="w").grid(row=idx, column=1, sticky="w", padx=(0, 16))
         tk.Label(inner, text=str(folder), anchor="w", justify="left", wraplength=480).grid(row=idx, column=2, sticky="w")
 
-    result = {"pairs": pairs}
+    result = {"pairs": pairs, "done": False}
 
     def select_all():
         for v in vars_by_idx:
@@ -248,11 +250,13 @@ def choose_sheet_folder_pairs(
     def ok():
         chosen = [pair for pair, v in zip(pairs, vars_by_idx) if v.get()]
         result["pairs"] = chosen
-        win.destroy()
+        result["done"] = True
+        win.quit()
 
     def cancel():
         result["pairs"] = []
-        win.destroy()
+        result["done"] = True
+        win.quit()
 
     btn = tk.Frame(win)
     btn.pack(fill="x", padx=10, pady=(0, 10))
@@ -261,12 +265,13 @@ def choose_sheet_folder_pairs(
     tk.Button(btn, text="OK", command=ok).pack(side="right")
     tk.Button(btn, text="Cancel", command=cancel).pack(side="right", padx=5)
 
-    win.transient(root)
+    win.protocol("WM_DELETE_WINDOW", cancel)
     win.focus_force()
-    win.grab_set()
-    root.update_idletasks()
-    root.update()
-    root.wait_window(win)
+    win.mainloop()
+    try:
+        win.destroy()
+    except Exception:
+        pass
     return result["pairs"]
 
 def build_category_folder_map(root_dir: Path) -> Dict[str, Path]:
