@@ -354,15 +354,24 @@ def add_links_to_sheet(ws, cropped_dir: Path) -> Tuple[int, int, str]:
     if TARGET_IMAGE_HEADER not in headers or TARGET_MICROX_HEADER not in headers:
         return 0, 0, "Sheet missing required headers"
 
+    # Preserve hidden-column state from source workbook.
+    originally_hidden_cols = set()
+    for idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(idx)
+        if bool(getattr(ws.column_dimensions[col_letter], "hidden", False)):
+            originally_hidden_cols.add(idx)
+
     image_col = headers[TARGET_IMAGE_HEADER]
     microx_col = headers[TARGET_MICROX_HEADER]
 
+    inserted_link_col = False
     if LINK_HEADER in headers:
         link_col = headers[LINK_HEADER]
     else:
         link_col = image_col + 1
         ws.insert_cols(link_col)
         ws.cell(row=1, column=link_col).value = LINK_HEADER
+        inserted_link_col = True
 
     ws.cell(row=1, column=link_col).font = Font(bold=True)
     ws.column_dimensions[get_column_letter(link_col)].width = max(12, len("Open Image") + 2)
@@ -390,6 +399,12 @@ def add_links_to_sheet(ws, cropped_dir: Path) -> Tuple[int, int, str]:
 
     ws.freeze_panes = "A2"
     shrink_columns_keep_visible(ws)
+
+    # Re-apply original hidden columns after any insert/width operations.
+    for old_idx in originally_hidden_cols:
+        new_idx = old_idx + 1 if inserted_link_col and old_idx >= link_col else old_idx
+        ws.column_dimensions[get_column_letter(new_idx)].hidden = True
+
     return linked, missing, "OK"
 
 
