@@ -34,6 +34,22 @@ MAX_COL_WIDTH = 28
 SAMPLE_ROWS_FOR_WIDTH = 500
 
 
+class LiveLogger:
+    def __init__(self, root: tk.Tk):
+        self.win = tk.Toplevel(root)
+        self.win.title("V4 Quick Links - Live Progress")
+        self.win.geometry("920x520")
+        self.text = tk.Text(self.win, wrap="word")
+        self.text.pack(fill="both", expand=True)
+        self.write("=== Live Progress ===")
+
+    def write(self, msg: str):
+        self.text.insert("end", msg + "\n")
+        self.text.see("end")
+        self.win.update_idletasks()
+        self.win.update()
+
+
 def canonical_key(s: str) -> str:
     s = str(s or "").strip().lower()
     s = s.replace("&", "_")
@@ -338,17 +354,26 @@ def main():
     root = tk.Tk()
     root.withdraw()
     try:
+        logger = LiveLogger(root)
         wb_path = choose_workbook(root)
+        logger.write(f"Selected workbook: {wb_path}")
         root_dir = choose_root_folder(root)
+        logger.write(f"Selected image root folder: {root_dir}")
+        logger.write("Loading workbook...")
 
         wb = load_workbook(wb_path)
+        logger.write(f"Workbook loaded. Sheets: {len(wb.sheetnames)}")
+        logger.write("Scanning category folders...")
         folder_map = build_category_folder_map(root_dir)
+        logger.write(f"Matched category folders with 'cropped': {len(folder_map)}")
 
         selected_pairs = choose_sheet_folder_pairs(root, wb.sheetnames, folder_map)
         if not selected_pairs:
             messagebox.showwarning("No categories selected", "No sheet/folder categories were selected for processing.", parent=root)
+            logger.write("No categories selected. Exiting.")
             return
 
+        logger.write(f"Categories selected: {len(selected_pairs)}")
 
         total_linked = 0
         total_missing = 0
@@ -356,23 +381,29 @@ def main():
         skipped: List[str] = []
 
         for sheet_name, cat_folder in selected_pairs:
+            logger.write(f"Processing sheet: {sheet_name}")
             ws = wb[sheet_name]
             cropped_dir = cat_folder / "cropped"
             if not cropped_dir.is_dir():
                 skipped.append(f"{sheet_name}: cropped missing")
+                logger.write(f"  Skipped: cropped folder missing at {cropped_dir}")
                 continue
 
             linked, missing, status = add_links_to_sheet(ws, cropped_dir)
             if status != "OK":
                 skipped.append(f"{sheet_name}: {status}")
+                logger.write(f"  Skipped: {status}")
                 continue
 
             processed += 1
             total_linked += linked
             total_missing += missing
+            logger.write(f"  Done: links={linked}, missing={missing}")
 
         out = wb_path.with_name(f"{wb_path.stem}_with_quick_links{wb_path.suffix}")
+        logger.write(f"Saving output workbook: {out}")
         wb.save(out)
+        logger.write("Save complete.")
 
         summary = (
             f"Saved: {out}\n"
@@ -386,6 +417,7 @@ def main():
             more = "" if len(skipped) <= 12 else f"\n... and {len(skipped)-12} more"
             summary += f"\n\nSkipped:\n{preview}{more}"
 
+        logger.write("Finished successfully.")
         messagebox.showinfo("Done", summary, parent=root)
     finally:
         root.destroy()
