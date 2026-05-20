@@ -213,6 +213,11 @@ def shrink_columns_keep_visible(ws):
         dim.width = max(MIN_COL_WIDTH, min(MAX_COL_WIDTH, len(first_word) + 1))
 
 
+def freeze_top_header_row(ws):
+    # Freeze only the first row (header), no frozen columns.
+    ws.freeze_panes = "A2"
+
+
 def ensure_new_columns_and_formulas(ws, area_orig_col: int, corr_col: int, new_brea_col: int, new_len_col: int, asso_col: int,
                                     breadth_col: int, length_col: int):
     for r in range(2, ws.max_row + 1):
@@ -299,7 +304,7 @@ def process_sheet(ws, cropped_dir: Path):
 
     ensure_new_columns_and_formulas(ws, area_orig_col, corr_col, new_brea_col, new_len_col, asso_col, breadth_col, length_col)
 
-    ws.freeze_panes = "A2"
+    freeze_top_header_row(ws)
     shrink_columns_keep_visible(ws)
 
     # Re-apply hidden by header label
