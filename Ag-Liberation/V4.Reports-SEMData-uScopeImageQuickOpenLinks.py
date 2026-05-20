@@ -191,9 +191,13 @@ def choose_sheet_folder_pairs(
         logger.write("No sheet/folder matches found.")
         return []
 
+    logger.write("Opening category selection window...")
     win = tk.Toplevel(root)
     win.title("Select categories to process")
     win.geometry("860x640")
+    win.lift()
+    win.attributes("-topmost", True)
+    win.after(300, lambda: win.attributes("-topmost", False))
 
     tk.Label(
         win,
@@ -258,7 +262,10 @@ def choose_sheet_folder_pairs(
     tk.Button(btn, text="Cancel", command=cancel).pack(side="right", padx=5)
 
     win.transient(root)
+    win.focus_force()
     win.grab_set()
+    root.update_idletasks()
+    root.update()
     root.wait_window(win)
     return result["pairs"]
 
@@ -399,7 +406,22 @@ def main():
         folder_map = build_category_folder_map(root_dir)
         logger.write(f"Matched category folders with 'cropped': {len(folder_map)}")
 
-        selected_pairs = choose_sheet_folder_pairs(root, wb.sheetnames, folder_map, logger)
+        # Give user a fast path in case category picker window is hidden by OS/IDE window stacking.
+        auto_process_all = messagebox.askyesno(
+            "Category Selection",
+            "Do you want to process ALL matched categories?\n\n"
+            "Choose 'No' to open a checkbox list and pick categories manually.",
+            parent=root,
+        )
+        if auto_process_all:
+            selected_pairs = []
+            for sheet in wb.sheetnames:
+                folder = resolve_folder_for_sheet(sheet, folder_map)
+                if folder is not None:
+                    selected_pairs.append((sheet, folder))
+            logger.write(f"Auto-selected all matched categories: {len(selected_pairs)}")
+        else:
+            selected_pairs = choose_sheet_folder_pairs(root, wb.sheetnames, folder_map, logger)
         if not selected_pairs:
             messagebox.showwarning("No categories selected", "No sheet/folder categories were selected for processing.", parent=root)
             logger.write("No categories selected. Exiting.")
