@@ -8,8 +8,8 @@ This document captures the initial requirements for the Au report automation wor
   - Row height: `45`
   - Column width: `8.43`
   - Font size: `11`, with only headers bold
-  - Source image size before embedding: height `1.58 cm`, width `1.58 cm`
-  - Displayed/embedded report image size: height `1.59 cm`, width `1.59 cm`, rotation `0`
+  - Original image files should not be resized before embedding
+  - Displayed/embedded report image size should be close to height `1.59 cm`, width `1.59 cm`, rotation `0`, with a small safety margin inside the cell
 - The workflow should prompt the user to select two image directories:
   1. Reflected light image directory
   2. SEM image directory
@@ -70,7 +70,7 @@ After the user manually edits the intermediate output by deleting some rows, col
 - The automation should be script-based so it can keep growing as more steps are added.
 - Each run should create a new final Excel workbook for one sample instead of modifying the original input/template workbook.
 - Cell dimensions should remain fixed at row height `45` and column width `8.43`.
-- Images should be prepared at source size height `1.58 cm` and width `1.58 cm`, then inserted at displayed report size height `1.59 cm`, width `1.59 cm`, rotation `0`, and effectively 100% scale after Excel rounding.
+- Original image files should not be resized before embedding because that reduces clarity; images should be inserted from the original files and displayed close to height `1.59 cm`, width `1.59 cm`, rotation `0`, with a small safety margin so they stay within their cells.
 - Text should use font size `11`; only header text should be bold.
 - Image folder count mismatches can be fixed manually later; the script should paste all images found in the selected folders.
 - Filename sorting should be numeric, so a file beginning with `001` is placed before a file beginning with `1000`.

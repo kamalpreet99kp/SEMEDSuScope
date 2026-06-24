@@ -17,7 +17,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from tkinter import Tk, filedialog, messagebox, simpledialog
 
 from copy import copy
@@ -32,13 +31,11 @@ ROW_HEIGHT = 45
 COLUMN_WIDTH = 8.43
 FONT_SIZE = 11
 IMAGE_EXTENSIONS = {".jpg", ".jpeg"}
-ORIGINAL_IMAGE_SIZE_CM = 1.58
 DISPLAY_IMAGE_SIZE_CM = 1.59
+IMAGE_CELL_MARGIN_PX = 2
 PIXELS_PER_CM_AT_96_DPI = 96 / 2.54
-ORIGINAL_IMAGE_WIDTH_PX = round(ORIGINAL_IMAGE_SIZE_CM * PIXELS_PER_CM_AT_96_DPI)
-ORIGINAL_IMAGE_HEIGHT_PX = round(ORIGINAL_IMAGE_SIZE_CM * PIXELS_PER_CM_AT_96_DPI)
-TARGET_IMAGE_WIDTH_PX = round(DISPLAY_IMAGE_SIZE_CM * PIXELS_PER_CM_AT_96_DPI)
-TARGET_IMAGE_HEIGHT_PX = round(DISPLAY_IMAGE_SIZE_CM * PIXELS_PER_CM_AT_96_DPI)
+TARGET_IMAGE_WIDTH_PX = round(DISPLAY_IMAGE_SIZE_CM * PIXELS_PER_CM_AT_96_DPI) - IMAGE_CELL_MARGIN_PX
+TARGET_IMAGE_HEIGHT_PX = round(DISPLAY_IMAGE_SIZE_CM * PIXELS_PER_CM_AT_96_DPI) - IMAGE_CELL_MARGIN_PX
 HEADER_FILL = PatternFill(fill_type="solid", fgColor="D9EAF7")
 
 
@@ -146,33 +143,23 @@ def set_standard_dimensions(worksheet, max_row: int, max_column: int) -> None:
         worksheet.column_dimensions[get_column_letter(column_number)].width = COLUMN_WIDTH
 
 
-def prepare_embedded_image(image_path: Path, temporary_folder: Path) -> Path:
-    """Create a square embedded copy representing the requested 1.58 cm original size.
+def exact_report_image_size(image_path: Path) -> tuple[int, int]:
+    """Return the report display size without changing the original image file.
 
-    Excel/openpyxl stores image dimensions in pixels. At 96 DPI, 1.58 cm and 1.59 cm
-    both round to 60 px, which keeps Excel's displayed scale effectively at 100% while
-    still honoring the requested 1.59 cm report display size.
+    The old Excel macro inserted the original picture and then set the shape height
+    to the row height. This follows the same idea: validate the image, keep the
+    original file quality, and display it just under 1.59 cm so there is a small
+    safety margin inside the cell.
     """
-    output_path = temporary_folder / f"{image_path.stem}_au_report{image_path.suffix.lower()}"
-    with PillowImage.open(image_path) as source_image:
-        resized_image = source_image.convert("RGB").resize(
-            (ORIGINAL_IMAGE_WIDTH_PX, ORIGINAL_IMAGE_HEIGHT_PX),
-            PillowImage.Resampling.LANCZOS,
-        )
-        resized_image.save(output_path)
-    return output_path
-
-
-def exact_report_image_size() -> tuple[int, int]:
-    """Return the required 1.59 cm x 1.59 cm display size in Excel pixels."""
+    with PillowImage.open(image_path):
+        pass
     return TARGET_IMAGE_WIDTH_PX, TARGET_IMAGE_HEIGHT_PX
 
 
-def add_image_to_cell(worksheet, image_path: Path, row_number: int, column_number: int, temporary_folder: Path) -> None:
-    """Insert one image into a worksheet cell."""
-    embedded_image_path = prepare_embedded_image(image_path, temporary_folder)
-    image = ExcelImage(str(embedded_image_path))
-    image.width, image.height = exact_report_image_size()
+def add_image_to_cell(worksheet, image_path: Path, row_number: int, column_number: int) -> None:
+    """Insert one original image into a worksheet cell at the report display size."""
+    image = ExcelImage(str(image_path))
+    image.width, image.height = exact_report_image_size(image_path)
     worksheet.add_image(image, f"{get_column_letter(column_number)}{row_number}")
 
 
@@ -247,7 +234,6 @@ def create_image_workbook(
     layout: SampleLayout,
     reflected_images: list[Path],
     sem_images: list[Path],
-    temporary_folder: Path,
 ) -> Workbook:
     """Create the first Au report workbook with headers, numbers, and images."""
     workbook = Workbook()
@@ -267,9 +253,9 @@ def create_image_workbook(
         number_cell.alignment = Alignment(horizontal="center", vertical="center")
 
         if index < len(reflected_images):
-            add_image_to_cell(worksheet, reflected_images[index], row_number, layout.reflected_light_column, temporary_folder)
+            add_image_to_cell(worksheet, reflected_images[index], row_number, layout.reflected_light_column)
         if index < len(sem_images):
-            add_image_to_cell(worksheet, sem_images[index], row_number, layout.sem_column, temporary_folder)
+            add_image_to_cell(worksheet, sem_images[index], row_number, layout.sem_column)
 
     worksheet.freeze_panes = "A2"
     return workbook
@@ -291,19 +277,18 @@ def main() -> None:
         raise UserCancelledError("No images found in selected folders.")
 
     output_file = choose_output_file(f"Au_Report_{layout.sample_type.replace('+', '_')}.xlsx")
-    with TemporaryDirectory() as temporary_directory:
-        workbook = create_image_workbook(layout, reflected_images, sem_images, Path(temporary_directory))
+    workbook = create_image_workbook(layout, reflected_images, sem_images)
 
-        area_imported = False
-        if messagebox.askyesno("Import Area column?", "Do you want to import the Area column from the Others sheet now?"):
-            data_workbook_path = choose_excel_file("Select Excel data file containing the Others sheet")
-            if data_workbook_path is not None:
-                worksheet = workbook.active
-                area_column = layout.sem_column + 1
-                copy_area_column_from_workbook(worksheet, data_workbook_path, area_column)
-                area_imported = True
+    area_imported = False
+    if messagebox.askyesno("Import Area column?", "Do you want to import the Area column from the Others sheet now?"):
+        data_workbook_path = choose_excel_file("Select Excel data file containing the Others sheet")
+        if data_workbook_path is not None:
+            worksheet = workbook.active
+            area_column = layout.sem_column + 1
+            copy_area_column_from_workbook(worksheet, data_workbook_path, area_column)
+            area_imported = True
 
-        workbook.save(output_file)
+    workbook.save(output_file)
 
     messagebox.showinfo(
         "Au report workbook created",
