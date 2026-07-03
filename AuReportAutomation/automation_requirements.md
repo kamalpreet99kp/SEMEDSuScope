@@ -7,9 +7,6 @@ This document captures the initial requirements for the Au report automation wor
 - The user has an existing macro-enabled Excel workbook with fixed layout dimensions:
   - Row height: `45`
   - Column width: `8.43`
-  - Font size: `11`, with only headers bold
-  - Original image files should not be modified; embedded workbook copies may be compressed/resized to control final workbook size
-  - Displayed/embedded report image size should be height `1.58 cm`, width `1.58 cm`, rotation `0`
 - The workflow should prompt the user to select two image directories:
   1. Reflected light image directory
   2. SEM image directory
@@ -18,7 +15,6 @@ This document captures the initial requirements for the Au report automation wor
 - Images must be inserted in numeric order from the lowest identifier to the highest identifier.
 - The first image row starts at row `2` because row `1` contains headers.
 - Column `A` should automatically be populated with sequential numbers from `1` to the number of image rows.
-- The intermediate workbook filename should use the selected Excel data file name when available and include `Inter`.
 
 ## Sample type layouts
 
@@ -40,7 +36,7 @@ The column order should follow this general pattern:
 - It should find/copy the first column with header `Area`.
 - The copied `Area` column should be pasted into the output workbook in the column immediately after `SEM Images`.
 - Blank yellow cells in the `Area` column must remain blank and preserve their yellow fill formatting in the final file.
-- The existing row height, column width, and font rule should remain fixed at row height `45`, column width `8.43`, and font size `11` with only headers bold.
+- The existing row height and column width should remain fixed at row height `45` and column width `8.43`.
 
 ## Later normalized chemistry import workflow
 
@@ -50,10 +46,6 @@ After the user manually edits the intermediate output by deleting some rows, col
 - It should open the sheet named `Au`.
 - It should locate the ending data area containing columns such as `Normalized`, `Au`, `Ag`, `Cu`, and `Hg`, depending on sample type.
 - It should copy the relevant chemistry columns and paste them after column `A` and before `R. Light Images` in the final report layout.
-- Pasted chemistry values should be displayed with exactly two decimal places.
-- The final chemistry row copied from the `Au` sheet should replace its report `No.` value with `Average`; that row should be bold from column `A` through the column immediately before `R. Light Images`.
-- The finished workbook filename should use the selected intermediate workbook name and replace `_Inter` with `_Final` when present.
-- The finishing script should then create an organized `Organized Blocks` worksheet with repeated side-by-side blocks.
 
 ## Final block organization workflow
 
@@ -66,30 +58,14 @@ After the user manually edits the intermediate output by deleting some rows, col
   - Right side: `11` through `20`
 - If there are more grains than one block can hold, the script should create additional blocks underneath the first block while preserving the sequence of all data and images.
 - There should be one blank row between repeated blocks, but that blank row applies only to the final organized area after the `Area` column step.
-- Block headers should be wrapped, using labels such as `Au\n(Wt%)`, `Ag\n(Wt%)`, `Cu\n(Wt%)`, `Hg\n(Wt%)`, `R. Light\nImages`, and `SEM\nImages`.
-- Only the final row of the final set should show `Average` in the first `No.` column instead of the last sequential number; do not add an `Average` row to every block.
-- The source `Average` row created from the Au chemistry data count should be copied naturally into the final block during block organization.
 - Each complete side-by-side block should receive thick outside borders.
 - If a keyboard shortcut is used for this final organization macro, the requested shortcut is `Ctrl+Shift+K`.
-
-## Word report export workflow
-
-- After the `Organized Blocks` sheet is created by `finish_au_report.py`, a separate Word-only script should create a Word document with the same base name as the final workbook.
-- The script should prompt for `Project No.`.
-- Only the first Word page should start with centered bold text `Project No.: XXX`; font size may be adjusted to keep the first block on page 1.
-- Only the first Word page should include the second centered bold row `Sample Name: xxxx`; font size may be adjusted to keep the first block on page 1, where `xxxx` is based on the selected Excel data filename with `(Au SEM)` removed if present.
-- Word orientation should be portrait for `Au+Ag`, `Au+Ag+Cu`, and `Au+Ag+Hg`; landscape for `Au+Ag+Cu+Hg`.
-- Each page should copy the Excel block and paste it using Word Paste Special as an editable `Microsoft Excel Worksheet Object`; this Word-specific behavior belongs in the separate Word export script so it can be tested/changed independently from the working Excel finishing script.
-- Page breaks should be inserted before each new block page after the first block, not after completed pages, to avoid blank pages between blocks.
-- `finish_au_report.py` should reduce Excel COM overhead by disabling screen updating/events/alerts/automatic calculation during processing when Excel permits those settings and by avoiding repeated formatting of already completed blocks.
 
 ## Implementation decisions confirmed
 
 - The automation should be script-based so it can keep growing as more steps are added.
 - Each run should create a new final Excel workbook for one sample instead of modifying the original input/template workbook.
 - Cell dimensions should remain fixed at row height `45` and column width `8.43`.
-- Original image files should not be modified; embedded workbook copies may be compressed/resized to control final workbook size because that reduces clarity; images should be inserted from the original files and displayed at height `1.58 cm`, width `1.58 cm`, rotation `0`.
-- Text should use font size `11`; only header text should be bold.
 - Image folder count mismatches can be fixed manually later; the script should paste all images found in the selected folders.
 - Filename sorting should be numeric, so a file beginning with `001` is placed before a file beginning with `1000`.
 - Implementation should proceed one step at a time, beginning with image insertion.
