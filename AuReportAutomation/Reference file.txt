@@ -1,0 +1,1587 @@
+import ast
+import csv
+import os
+import sys
+import threading
+import time
+from pathlib import Path  #test commit and push
+
+try:
+    from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
+    from PySide6.QtGui import QDoubleValidator, QPixmap
+    from PySide6.QtWidgets import (
+        QApplication,
+        QAbstractItemView,
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFileDialog,
+        QFormLayout,
+        QGroupBox,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QLineEdit,
+        QMainWindow,
+        QMessageBox,
+        QPlainTextEdit,
+        QPushButton,
+        QSpinBox,
+        QTableWidget,
+        QTableWidgetItem,
+        QTabWidget,
+        QVBoxLayout,
+        QWidget,
+    )
+except ImportError:
+    try:
+        from PySide2.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
+        from PySide2.QtGui import QDoubleValidator, QPixmap
+        from PySide2.QtWidgets import (
+            QApplication,
+            QAbstractItemView,
+            QCheckBox,
+            QComboBox,
+            QDoubleSpinBox,
+            QFileDialog,
+            QFormLayout,
+            QGroupBox,
+            QHBoxLayout,
+            QHeaderView,
+            QLabel,
+            QLineEdit,
+            QMainWindow,
+            QMessageBox,
+            QPlainTextEdit,
+            QPushButton,
+            QSpinBox,
+            QTableWidget,
+            QTableWidgetItem,
+            QTabWidget,
+            QVBoxLayout,
+            QWidget,
+        )
+    except ImportError as exc:
+        raise SystemExit(
+            "PySide6 is required to run the app. Install it with:\n"
+            "    pip install PySide6\n"
+        ) from exc
+
+from CorrectSEMPositionsFromTemplateV3 import write_corrected_csv
+from CreateTSVfromPycroOutput_App import (
+    DEFAULT_PROJECT_DIRECTORY,
+    generate_mark_and_grain_lists,
+)
+
+
+def _qt_attr(group_name, attr_name, fallback_name):
+    group = getattr(Qt, group_name, None)
+    if group is not None and hasattr(group, attr_name):
+        return getattr(group, attr_name)
+    return getattr(Qt, fallback_name)
+
+
+KEEP_ASPECT_RATIO = _qt_attr("AspectRatioMode", "KeepAspectRatio", "KeepAspectRatio")
+SMOOTH_TRANSFORM = _qt_attr(
+    "TransformationMode", "SmoothTransformation", "SmoothTransformation"
+)
+ALIGN_CENTER = _qt_attr("AlignmentFlag", "AlignCenter", "AlignCenter")
+WAIT_CURSOR = _qt_attr("CursorShape", "WaitCursor", "WaitCursor")
+
+
+def _class_enum(class_object, group_name, attr_name, fallback_name):
+    group = getattr(class_object, group_name, None)
+    if group is not None and hasattr(group, attr_name):
+        return getattr(group, attr_name)
+    return getattr(class_object, fallback_name)
+
+
+def _message_button(attr_name):
+    group = getattr(QMessageBox, "StandardButton", None)
+    if group is not None and hasattr(group, attr_name):
+        return getattr(group, attr_name)
+    return getattr(QMessageBox, attr_name)
+
+
+HEADER_STRETCH = _class_enum(QHeaderView, "ResizeMode", "Stretch", "Stretch")
+NO_EDIT_TRIGGERS = _class_enum(
+    QAbstractItemView,
+    "EditTrigger",
+    "NoEditTriggers",
+    "NoEditTriggers",
+)
+YES_BUTTON = _message_button("Yes")
+NO_BUTTON = _message_button("No")
+
+
+def _format_float(value):
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
+
+
+def _read_mpo_stage_values():
+    try:
+        from PyWinAuto.read_mpo_values import read_stage_values
+    except ImportError as exc:
+        raise RuntimeError(
+            "pywinauto is required to read MPO Test values. Install it with:\n"
+            "    pip install pywinauto"
+        ) from exc
+
+    try:
+        return read_stage_values()
+    except Exception as exc:
+        if exc.__class__.__name__ == "ElementNotFoundError":
+            raise RuntimeError("MPO Test not found. Open MPO Test first.") from exc
+        raise
+
+
+def _parse_mpo_float(values, field_name):
+    text = str(values.get(field_name, "")).strip()
+    if not text:
+        raise ValueError(f"MPO Test returned a blank {field_name} value.")
+
+    try:
+        return float(text.replace(",", ""))
+    except ValueError as exc:
+        raise ValueError(
+            f"Could not read MPO Test {field_name} value as a number: {text!r}"
+        ) from exc
+
+
+def _convert_mpo_mm(value, sem_units):
+    if sem_units == "um":
+        return value * 1000.0
+    return value
+
+
+def _convert_to_mpo_mm(value, sem_units):
+    if sem_units == "um":
+        return value / 1000.0
+    return value
+
+
+def _format_mpo_mm(value):
+    return f"{float(value):.9f}".rstrip("0").rstrip(".")
+
+
+def _set_mpo_stage_xy(x_mm, y_mm):
+    try:
+        from PyWinAuto.mpo_xy_controller import set_xy
+    except ImportError as exc:
+        raise RuntimeError(
+            "pywinauto is required to set MPO Test stage values. Install it with:\n"
+            "    pip install pywinauto"
+        ) from exc
+
+    try:
+        set_xy(_format_mpo_mm(x_mm), _format_mpo_mm(y_mm))
+    except Exception as exc:
+        if exc.__class__.__name__ == "ElementNotFoundError":
+            raise RuntimeError("MPO Test not found. Open MPO Test first.") from exc
+        raise
+
+
+def _wait_for_mpo_stage_idle(timeout, poll_interval, stable_polls):
+    try:
+        from PyWinAuto.mpo_xy_controller import wait_for_stage_idle
+    except ImportError as exc:
+        raise RuntimeError(
+            "pywinauto is required to wait for MPO Test stage movement. Install it with:\n"
+            "    pip install pywinauto"
+        ) from exc
+
+    try:
+        return wait_for_stage_idle(
+            timeout=timeout,
+            poll_interval=poll_interval,
+            stable_polls=stable_polls,
+        )
+    except Exception as exc:
+        if exc.__class__.__name__ == "ElementNotFoundError":
+            raise RuntimeError("MPO Test not found. Open MPO Test first.") from exc
+        raise
+
+
+def _warm_mpo_stage_controls():
+    try:
+        from PyWinAuto.mpo_xy_controller import warm_up
+    except ImportError:
+        return
+
+    try:
+        warm_up(focus=False)
+    except Exception:
+        pass
+
+
+def _parse_corrected_float(row, field_name):
+    text = str(row.get(field_name, "")).strip()
+    if not text:
+        raise ValueError(f"Corrected row has a blank {field_name} value.")
+
+    try:
+        return float(text.replace(",", ""))
+    except ValueError as exc:
+        raise ValueError(
+            f"Could not read corrected {field_name} value as a number: {text!r}"
+        ) from exc
+
+
+def _read_csv_rows(path):
+    with Path(path).open("r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        return list(reader)
+
+
+def _write_sem_mark_positions(output_path, mark_entries, sem_units):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "Mark",
+        "SEM_X",
+        "SEM_Y",
+        "SEM_Units",
+        "Microscope_X",
+        "Microscope_Y",
+        "Image Paths",
+    ]
+    with output_path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        for label, record, sem_point in mark_entries:
+            writer.writerow(
+                {
+                    "Mark": label,
+                    "SEM_X": _format_float(sem_point[0]),
+                    "SEM_Y": _format_float(sem_point[1]),
+                    "SEM_Units": sem_units,
+                    "Microscope_X": _format_float(record.x),
+                    "Microscope_Y": _format_float(record.y),
+                    "Image Paths": repr(record.image_paths),
+                }
+            )
+    return output_path
+
+
+def _first_image_path(value):
+    if isinstance(value, list):
+        return Path(value[0]) if value else None
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        parsed = ast.literal_eval(text)
+    except (SyntaxError, ValueError):
+        return Path(text)
+
+    if isinstance(parsed, list) and parsed:
+        return Path(parsed[0])
+    if isinstance(parsed, str):
+        return Path(parsed)
+    return None
+
+
+def _corrected_value_text(row, field_name, display_index):
+    text = str(row.get(field_name, "")).strip()
+    if not text:
+        raise ValueError(
+            f"Corrected row {display_index} has a blank {field_name} value."
+        )
+
+    try:
+        float(text.replace(",", ""))
+    except ValueError as exc:
+        raise ValueError(
+            f"Could not read corrected row {display_index} "
+            f"{field_name} value as a number: {text!r}"
+        ) from exc
+    return text.replace(",", "")
+
+
+class StopRequested(Exception):
+    pass
+
+
+class AutoFeatureRunner(QObject):
+    log = Signal(str)
+    progress = Signal(int, int)
+    finished = Signal(bool, str)
+
+    def __init__(
+        self,
+        positions,
+        click_delay,
+        start_run,
+        monitor_finish,
+        enable_notifications,
+        dry_run,
+        sem_units,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.positions = list(positions)
+        self.click_delay = click_delay
+        self.start_run = start_run
+        self.monitor_finish = monitor_finish
+        self.enable_notifications = enable_notifications
+        self.dry_run = dry_run
+        self.sem_units = sem_units
+        self.stage_idle_timeout_seconds = 120
+        self.stage_idle_poll_seconds = 0.25
+        self.stage_idle_stable_polls = 3
+        self._stop_event = threading.Event()
+        self.pyautogui = None
+
+    @Slot()
+    def run(self):
+        try:
+            self._run()
+        except StopRequested:
+            self.finished.emit(False, "AutoFeature3.0 stopped.")
+        except Exception as exc:
+            self.finished.emit(False, str(exc))
+
+    def stop(self):
+        self._stop_event.set()
+
+    def _run(self):
+        total = len(self.positions)
+        if total == 0:
+            raise ValueError("No corrected SEM positions selected.")
+
+        if not self.dry_run:
+            try:
+                import pyautogui
+            except ImportError as exc:
+                raise RuntimeError(
+                    "pyautogui is required for live AutoFeature3.0 automation. "
+                    "Install it with: pip install pyautogui"
+                ) from exc
+            self.pyautogui = pyautogui
+            self.log.emit("Warming MPO Test stage controls.")
+            _warm_mpo_stage_controls()
+
+        for queue_index, (display_index, row) in enumerate(self.positions, start=1):
+            self._check_stop()
+            x_value = _corrected_value_text(row, "X", display_index)
+            y_value = _corrected_value_text(row, "Y", display_index)
+            self.progress.emit(display_index, total)
+            self.log.emit(
+                "Queue "
+                f"{queue_index} of {total}: X={x_value}, Y={y_value}"
+            )
+            if self.dry_run:
+                self._sleep(0.05)
+            else:
+                self._setup_auto_feature_run(x_value, y_value)
+
+        setup_time = time.strftime("%H:%M:%S", time.localtime())
+        setup_message = "SEM Locations Setup : " + setup_time
+        self.log.emit(setup_message)
+        self._post_notifications(setup_message)
+
+        if self.start_run:
+            self._check_stop()
+            self.log.emit("Starting SEM run.")
+            if self.dry_run:
+                self._sleep(0.05)
+                self.log.emit("Dry run: skipped Start click.")
+            else:
+                self._sleep(2)
+                self._click(1660, 981, "Start run")
+
+        if self.start_run and self.monitor_finish:
+            if self.dry_run:
+                self.log.emit("Dry run: skipped completion monitor.")
+            else:
+                self._sleep(2)
+                self._monitor_until_complete()
+                done_time = time.strftime("%H:%M:%S", time.localtime())
+                done_message = "AutoFeature3.0 Run Complete : " + done_time
+                self._post_notifications(done_message)
+                self.log.emit(done_message)
+
+        self.finished.emit(True, "AutoFeature3.0 completed.")
+
+    def _setup_auto_feature_run(self, x_value, y_value):
+        delay = self.click_delay
+        self._sleep(delay + 0.5)
+        self._wait_while_pixel(633, 190, (111, 124, 170), 10, "Program idle")
+        self._wait_while_pixel(633, 190, (255, 255, 255), 20, "Program idle")
+        self._set_stage_with_mpo(x_value, y_value)
+        self._click(630, 190, "Automate")
+        self._wait_while_pixel(830, 550, (59, 110, 157), 10, "Waiting for New Area")
+        self._click(830, 550, "New Area")
+        self._wait_while_pixel(830, 550, (61, 101, 142), 10, "Waiting after New Area")
+        self._click(1185, 840, "Next")
+        self._sleep(delay + 1)
+        self._click(800, 560, "Point")
+        self._wait_while_pixel(800, 560, (63, 105, 146), 10, "Waiting after Point")
+        self._click(1185, 840, "Next")
+        self._sleep(delay)
+        self._click(1906, 1000, "Close notification")
+        self._sleep(delay)
+        self._wait_for_mpo_stage_idle()
+        self._click(1260, 730, "Accept")
+        self._sleep(delay + 0.75)
+        self._click(1906, 1000, "Close notification")
+        self._sleep(0.25)
+        self._click(1182, 840, "Finish")
+        self._sleep(delay + 0.75)
+        self._click(1906, 1000, "Close notification")
+        self._sleep(0.25)
+        self._click(1260, 840, "Accept")
+
+    def _set_stage_with_mpo(self, x_value, y_value):
+        self._check_stop()
+        sem_x = float(str(x_value).replace(",", ""))
+        sem_y = float(str(y_value).replace(",", ""))
+        x_mm = _convert_to_mpo_mm(sem_x, self.sem_units)
+        y_mm = _convert_to_mpo_mm(sem_y, self.sem_units)
+        self.log.emit(
+            "Start MPO stage move "
+            f"X {_format_mpo_mm(x_mm)} mm, Y {_format_mpo_mm(y_mm)} mm."
+        )
+        _set_mpo_stage_xy(x_mm, y_mm)
+
+    def _wait_for_mpo_stage_idle(self):
+        self._check_stop()
+        self.log.emit("Waiting for MPO Test to report the stage idle.")
+        result = _wait_for_mpo_stage_idle(
+            timeout=self.stage_idle_timeout_seconds,
+            poll_interval=self.stage_idle_poll_seconds,
+            stable_polls=self.stage_idle_stable_polls,
+        )
+        if result.get("saw_busy"):
+            self.log.emit("MPO Test stage move complete.")
+        else:
+            self.log.emit("MPO Test already reported idle.")
+
+    def _monitor_until_complete(self):
+        self.log.emit("Monitoring SEM run completion.")
+        while True:
+            self._check_stop()
+            try:
+                active = self.pyautogui.pixelMatchesColor(
+                    1675,
+                    981,
+                    (35, 82, 85),
+                    tolerance=10,
+                )
+            except Exception as exc:
+                self.log.emit(f"Completion monitor read failed: {exc}")
+                active = True
+
+            if not active:
+                self.log.emit("SEM run no longer appears active.")
+                return
+            self.log.emit("SEM run active.")
+            self._sleep(60)
+
+    def _wait_while_pixel(self, x, y, color, tolerance, status):
+        next_log = time.monotonic()
+        while True:
+            self._check_stop()
+            if not self.pyautogui.pixelMatchesColor(
+                x,
+                y,
+                color,
+                tolerance=tolerance,
+            ):
+                return
+            if time.monotonic() >= next_log:
+                self.log.emit(status)
+                next_log = time.monotonic() + 5
+            self._sleep(0.25)
+
+    def _click(self, x, y, label):
+        self._check_stop()
+        self.log.emit(f"Click {label} ({x}, {y})")
+        self.pyautogui.click(x=x, y=y)
+
+    def _sleep(self, seconds):
+        if seconds <= 0:
+            return
+        deadline = time.monotonic() + seconds
+        while True:
+            self._check_stop()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.1, remaining))
+
+    def _check_stop(self):
+        if self._stop_event.is_set():
+            raise StopRequested()
+
+    def _post_notifications(self, text):
+        if not self.enable_notifications:
+            return
+        if self.dry_run:
+            self.log.emit("Dry run: notifications skipped.")
+            return
+
+        try:
+            import requests
+        except ImportError:
+            self.log.emit("Notifications skipped: requests is not installed.")
+            return
+
+        telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+        if telegram_token and telegram_chat_id:
+            try:
+                requests.get(
+                    f"https://api.telegram.org/bot{telegram_token}/sendMessage",
+                    params={
+                        "chat_id": telegram_chat_id,
+                        "parse_mode": "Markdown",
+                        "text": text,
+                    },
+                    timeout=10,
+                )
+                self.log.emit("Telegram notification sent.")
+            except Exception as exc:
+                self.log.emit(f"Telegram notification failed: {exc}")
+        else:
+            self.log.emit("Telegram notification skipped: env vars not set.")
+
+        slack_token = os.environ.get("SLACK_BOT_TOKEN")
+        slack_channel = os.environ.get("SLACK_CHANNEL")
+        slack_user_name = os.environ.get("SLACK_USER_NAME", "semmonitor")
+        if slack_token and slack_channel:
+            try:
+                requests.post(
+                    "https://slack.com/api/chat.postMessage",
+                    data={
+                        "token": slack_token,
+                        "channel": slack_channel,
+                        "text": text,
+                        "username": slack_user_name,
+                    },
+                    timeout=10,
+                )
+                self.log.emit("Slack notification sent.")
+            except Exception as exc:
+                self.log.emit(f"Slack notification failed: {exc}")
+        else:
+            self.log.emit("Slack notification skipped: env vars not set.")
+
+
+class ImageLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap = None
+        self.setAlignment(ALIGN_CENTER)
+        self.setMinimumSize(320, 240)
+        self.setStyleSheet(
+            "QLabel { background: #f6f6f6; border: 1px solid #c8c8c8; }"
+        )
+
+    def set_image_path(self, image_path):
+        if image_path is None:
+            self._pixmap = None
+            self.setText("No image")
+            return
+
+        pixmap = QPixmap(str(image_path))
+        if pixmap.isNull():
+            self._pixmap = None
+            self.setText(f"Could not load image:\n{image_path}")
+            return
+
+        self._pixmap = pixmap
+        self.setText("")
+        self._update_scaled_pixmap()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_scaled_pixmap()
+
+    def _update_scaled_pixmap(self):
+        if self._pixmap is None or self.width() <= 0 or self.height() <= 0:
+            return
+        scaled = self._pixmap.scaled(
+            self.size(),
+            KEEP_ASPECT_RATIO,
+            SMOOTH_TRANSFORM,
+        )
+        self.setPixmap(scaled)
+
+
+class MarkPanel(QGroupBox):
+    def __init__(self, title, parent=None):
+        super().__init__(title, parent)
+        self.records = []
+        self.combo = QComboBox()
+        self.image = ImageLabel()
+        self.micro_x = QLabel("-")
+        self.micro_y = QLabel("-")
+        self.sem_x = QLineEdit()
+        self.sem_y = QLineEdit()
+        self.read_mpo_button = QPushButton("Enter SEM Position")
+        self.set_stage_button = QPushButton("Set Stage")
+
+        validator = QDoubleValidator(self)
+        self.sem_x.setValidator(validator)
+        self.sem_y.setValidator(validator)
+        self.sem_x.setPlaceholderText("SEM X")
+        self.sem_y.setPlaceholderText("SEM Y")
+
+        form = QFormLayout()
+        form.addRow("Mark image", self.combo)
+        form.addRow("Microscope X", self.micro_x)
+        form.addRow("Microscope Y", self.micro_y)
+        form.addRow("SEM X", self.sem_x)
+        form.addRow("SEM Y", self.sem_y)
+        form.addRow(self.read_mpo_button)
+        form.addRow(self.set_stage_button)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.image, stretch=1)
+        layout.addLayout(form)
+
+        self.combo.currentIndexChanged.connect(self._update_from_selection)
+
+    def set_records(self, records, default_index=0):
+        self.records = list(records)
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        for index, record in enumerate(self.records, start=1):
+            basename = Path(record.image_paths[0]).name if record.image_paths else "-"
+            self.combo.addItem(f"{index}: {basename}")
+        self.combo.blockSignals(False)
+        if self.records:
+            self.combo.setCurrentIndex(min(default_index, len(self.records) - 1))
+        self._update_from_selection()
+
+    def selected_index(self):
+        return self.combo.currentIndex()
+
+    def selected_record(self):
+        index = self.selected_index()
+        if index < 0 or index >= len(self.records):
+            return None
+        return self.records[index]
+
+    def sem_point(self):
+        x_text = self.sem_x.text().strip()
+        y_text = self.sem_y.text().strip()
+        if not x_text or not y_text:
+            raise ValueError(f"Enter SEM X and SEM Y for {self.title()}.")
+        return float(x_text), float(y_text)
+
+    def set_sem_point(self, x_value, y_value):
+        self.sem_x.setText(_format_float(x_value))
+        self.sem_y.setText(_format_float(y_value))
+
+    def _update_from_selection(self):
+        record = self.selected_record()
+        if record is None:
+            self.micro_x.setText("-")
+            self.micro_y.setText("-")
+            self.image.set_image_path(None)
+            return
+
+        self.micro_x.setText(_format_float(record.x))
+        self.micro_y.setText(_format_float(record.y))
+        self.image.set_image_path(_first_image_path(record.image_paths))
+
+
+class CorrectedImagePanel(QGroupBox):
+    def __init__(self, title, parent=None):
+        super().__init__(title, parent)
+        self.row = None
+        self.image = ImageLabel()
+        self.filename = QLabel("-")
+        self.sem_x = QLabel("-")
+        self.sem_y = QLabel("-")
+        self.micro_x = QLabel("-")
+        self.micro_y = QLabel("-")
+        self.set_stage_button = QPushButton("Set Stage")
+        self.set_stage_button.setEnabled(False)
+
+        form = QFormLayout()
+        form.addRow("Image", self.filename)
+        form.addRow("SEM X", self.sem_x)
+        form.addRow("SEM Y", self.sem_y)
+        form.addRow("Microscope X", self.micro_x)
+        form.addRow("Microscope Y", self.micro_y)
+        form.addRow(self.set_stage_button)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.image, stretch=1)
+        layout.addLayout(form)
+
+    def set_row(self, row):
+        self.row = row
+        if row is None:
+            self.filename.setText("-")
+            self.sem_x.setText("-")
+            self.sem_y.setText("-")
+            self.micro_x.setText("-")
+            self.micro_y.setText("-")
+            self.image.set_image_path(None)
+            self.set_stage_button.setEnabled(False)
+            return
+
+        image_path = _first_image_path(row.get("Image Paths"))
+        self.filename.setText(image_path.name if image_path else "-")
+        self.sem_x.setText(row.get("X", "-"))
+        self.sem_y.setText(row.get("Y", "-"))
+        self.micro_x.setText(row.get("Microscope_X", "-"))
+        self.micro_y.setText(row.get("Microscope_Y", "-"))
+        self.image.set_image_path(image_path)
+        self.set_stage_button.setEnabled(True)
+
+
+class MicroToSEMWorkflowApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Micro-to-SEM Workflow")
+        self.resize(1280, 820)
+
+        self.project_dir = None
+        self.mark_csv = None
+        self.grains_csv = None
+        self.mineral_check_csv = None
+        self.corrected_csv = None
+        self.mineral_check_corrected_csv = None
+        self.sem_mark_positions_csv = None
+        self.corrected_sem_units = None
+        self.mark_records = []
+        self.grain_records = []
+        self.mineral_check_records = []
+        self.corrected_rows = []
+        self.mineral_check_rows = []
+        self.confirm_pair_start = 0
+        self.mineral_check_pair_start = 0
+        self.autofeature_thread = None
+        self.autofeature_runner = None
+
+        self.tabs = QTabWidget()
+        self.setup_tab = self._build_setup_tab()
+        self.fiducial_tab = self._build_fiducial_tab()
+        self.confirm_tab = self._build_confirm_tab()
+        self.mineral_check_tab = self._build_mineral_check_tab()
+        self.autofeature_tab = self._build_autofeature_tab()
+        self.tabs.addTab(self.setup_tab, "1. Setup")
+        self.tabs.addTab(self.fiducial_tab, "2. Mark SEM Positions")
+        self.tabs.addTab(self.confirm_tab, "3. Confirm Correction")
+        self.tabs.addTab(self.mineral_check_tab, "4. Mineral Check")
+        self.tabs.addTab(self.autofeature_tab, "5. Run AutoFeature3.0")
+        self.tabs.setTabEnabled(1, False)
+        self.tabs.setTabEnabled(2, False)
+        self.tabs.setTabEnabled(3, False)
+        self.tabs.setTabEnabled(4, False)
+        self.setCentralWidget(self.tabs)
+        self._set_autofeature_running(False)
+
+    def _build_setup_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        selector_group = QGroupBox("Project Directory")
+        selector_layout = QHBoxLayout(selector_group)
+        self.project_dir_edit = QLineEdit()
+        self.project_dir_edit.setPlaceholderText(
+            "Folder containing mark, grains, and optional mineral check"
+        )
+        self.browse_button = QPushButton("Browse")
+        self.build_lists_button = QPushButton("Build Lists")
+        selector_layout.addWidget(self.project_dir_edit, stretch=1)
+        selector_layout.addWidget(self.browse_button)
+        selector_layout.addWidget(self.build_lists_button)
+
+        self.setup_status = QLabel(
+            "Select a folder with mark and grains sub-directories."
+        )
+        self.summary_table = QTableWidget(0, 5)
+        self.summary_table.setHorizontalHeaderLabels(
+            ["Folder", "CSV", "Image List", "Positions", "Images"]
+        )
+        self.summary_table.horizontalHeader().setSectionResizeMode(HEADER_STRETCH)
+        self.summary_table.verticalHeader().setVisible(False)
+        self.summary_table.setEditTriggers(NO_EDIT_TRIGGERS)
+
+        layout.addWidget(selector_group)
+        layout.addWidget(self.setup_status)
+        layout.addWidget(self.summary_table, stretch=1)
+
+        self.browse_button.clicked.connect(self._browse_project_dir)
+        self.build_lists_button.clicked.connect(self._build_lists)
+        return tab
+
+    def _build_fiducial_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        panels = QHBoxLayout()
+        self.mark_a_panel = MarkPanel("Mark A")
+        self.mark_b_panel = MarkPanel("Mark B")
+        panels.addWidget(self.mark_a_panel, stretch=1)
+        panels.addWidget(self.mark_b_panel, stretch=1)
+
+        settings_group = QGroupBox("Correction Output")
+        settings_layout = QHBoxLayout(settings_group)
+        self.sem_units_combo = QComboBox()
+        self.sem_units_combo.addItems(["mm", "um"])
+        self.decimals_spin = QSpinBox()
+        self.decimals_spin.setRange(0, 8)
+        self.decimals_spin.setValue(2)
+        self.swap_marks_button = QPushButton("Swap Marks")
+        self.correct_button = QPushButton("Create Corrected Positions")
+        settings_layout.addWidget(QLabel("SEM units"))
+        settings_layout.addWidget(self.sem_units_combo)
+        settings_layout.addWidget(QLabel("Decimals"))
+        settings_layout.addWidget(self.decimals_spin)
+        settings_layout.addStretch(1)
+        settings_layout.addWidget(self.swap_marks_button)
+        settings_layout.addWidget(self.correct_button)
+
+        self.fiducial_status = QLabel("Build lists before entering SEM positions.")
+
+        layout.addLayout(panels, stretch=1)
+        layout.addWidget(settings_group)
+        layout.addWidget(self.fiducial_status)
+
+        self.mark_a_panel.read_mpo_button.clicked.connect(
+            lambda: self._fill_mark_from_mpo(self.mark_a_panel)
+        )
+        self.mark_b_panel.read_mpo_button.clicked.connect(
+            lambda: self._fill_mark_from_mpo(self.mark_b_panel)
+        )
+        self.mark_a_panel.set_stage_button.clicked.connect(
+            lambda: self._set_stage_from_mark_panel(self.mark_a_panel)
+        )
+        self.mark_b_panel.set_stage_button.clicked.connect(
+            lambda: self._set_stage_from_mark_panel(self.mark_b_panel)
+        )
+        self.swap_marks_button.clicked.connect(self._swap_marks)
+        self.correct_button.clicked.connect(self._create_corrected_positions)
+        return tab
+
+    def _build_confirm_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        image_layout = QHBoxLayout()
+        self.confirm_panel_a = CorrectedImagePanel("Example A")
+        self.confirm_panel_b = CorrectedImagePanel("Example B")
+        image_layout.addWidget(self.confirm_panel_a, stretch=1)
+        image_layout.addWidget(self.confirm_panel_b, stretch=1)
+
+        nav_layout = QHBoxLayout()
+        self.previous_pair_button = QPushButton("Previous Pair")
+        self.next_pair_button = QPushButton("Next Pair")
+        self.confirm_status = QLabel("Corrected positions will appear here.")
+        nav_layout.addWidget(self.previous_pair_button)
+        nav_layout.addWidget(self.next_pair_button)
+        nav_layout.addStretch(1)
+        nav_layout.addWidget(self.confirm_status)
+
+        self.corrected_table = QTableWidget(0, 5)
+        self.corrected_table.setHorizontalHeaderLabels(
+            ["SEM X", "SEM Y", "Microscope X", "Microscope Y", "Image"]
+        )
+        self.corrected_table.horizontalHeader().setSectionResizeMode(HEADER_STRETCH)
+        self.corrected_table.verticalHeader().setVisible(False)
+        self.corrected_table.setEditTriggers(NO_EDIT_TRIGGERS)
+
+        layout.addLayout(image_layout, stretch=2)
+        layout.addLayout(nav_layout)
+        layout.addWidget(self.corrected_table, stretch=1)
+
+        self.previous_pair_button.clicked.connect(self._previous_pair)
+        self.next_pair_button.clicked.connect(self._next_pair)
+        self.confirm_panel_a.set_stage_button.clicked.connect(
+            lambda: self._set_stage_from_panel(self.confirm_panel_a)
+        )
+        self.confirm_panel_b.set_stage_button.clicked.connect(
+            lambda: self._set_stage_from_panel(self.confirm_panel_b)
+        )
+        return tab
+
+    def _build_mineral_check_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        image_layout = QHBoxLayout()
+        self.mineral_check_panel_a = CorrectedImagePanel("Mineral Check A")
+        self.mineral_check_panel_b = CorrectedImagePanel("Mineral Check B")
+        image_layout.addWidget(self.mineral_check_panel_a, stretch=1)
+        image_layout.addWidget(self.mineral_check_panel_b, stretch=1)
+
+        nav_layout = QHBoxLayout()
+        self.previous_mineral_check_pair_button = QPushButton("Previous Pair")
+        self.next_mineral_check_pair_button = QPushButton("Next Pair")
+        self.mineral_check_status = QLabel(
+            "Mineral check positions will appear here when available."
+        )
+        nav_layout.addWidget(self.previous_mineral_check_pair_button)
+        nav_layout.addWidget(self.next_mineral_check_pair_button)
+        nav_layout.addStretch(1)
+        nav_layout.addWidget(self.mineral_check_status)
+
+        self.mineral_check_table = QTableWidget(0, 5)
+        self.mineral_check_table.setHorizontalHeaderLabels(
+            ["SEM X", "SEM Y", "Microscope X", "Microscope Y", "Image"]
+        )
+        self.mineral_check_table.horizontalHeader().setSectionResizeMode(HEADER_STRETCH)
+        self.mineral_check_table.verticalHeader().setVisible(False)
+        self.mineral_check_table.setEditTriggers(NO_EDIT_TRIGGERS)
+
+        layout.addLayout(image_layout, stretch=2)
+        layout.addLayout(nav_layout)
+        layout.addWidget(self.mineral_check_table, stretch=1)
+
+        self.previous_mineral_check_pair_button.clicked.connect(
+            self._previous_mineral_check_pair
+        )
+        self.next_mineral_check_pair_button.clicked.connect(
+            self._next_mineral_check_pair
+        )
+        self.mineral_check_panel_a.set_stage_button.clicked.connect(
+            lambda: self._set_stage_from_panel(
+                self.mineral_check_panel_a, self.mineral_check_status
+            )
+        )
+        self.mineral_check_panel_b.set_stage_button.clicked.connect(
+            lambda: self._set_stage_from_panel(
+                self.mineral_check_panel_b, self.mineral_check_status
+            )
+        )
+        return tab
+
+    def _build_autofeature_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.autofeature_status = QLabel(
+            "Create corrected positions before running AutoFeature3.0."
+        )
+
+        self.autofeature_table = QTableWidget(0, 6)
+        self.autofeature_table.setHorizontalHeaderLabels(
+            ["#", "SEM X", "SEM Y", "Microscope X", "Microscope Y", "Image"]
+        )
+        self.autofeature_table.horizontalHeader().setSectionResizeMode(HEADER_STRETCH)
+        self.autofeature_table.verticalHeader().setVisible(False)
+        self.autofeature_table.setEditTriggers(NO_EDIT_TRIGGERS)
+
+        controls_group = QGroupBox("AutoFeature3.0 Queue")
+        controls_layout = QVBoxLayout(controls_group)
+
+        range_layout = QHBoxLayout()
+        self.autofeature_start_spin = QSpinBox()
+        self.autofeature_start_spin.setRange(1, 1)
+        self.autofeature_end_spin = QSpinBox()
+        self.autofeature_end_spin.setRange(1, 1)
+        self.autofeature_click_delay_spin = QDoubleSpinBox()
+        self.autofeature_click_delay_spin.setRange(0.05, 5.0)
+        self.autofeature_click_delay_spin.setSingleStep(0.05)
+        self.autofeature_click_delay_spin.setDecimals(2)
+        self.autofeature_click_delay_spin.setValue(0.55)
+        range_layout.addWidget(QLabel("From"))
+        range_layout.addWidget(self.autofeature_start_spin)
+        range_layout.addWidget(QLabel("To"))
+        range_layout.addWidget(self.autofeature_end_spin)
+        range_layout.addWidget(QLabel("Click delay"))
+        range_layout.addWidget(self.autofeature_click_delay_spin)
+        range_layout.addStretch(1)
+
+        options_layout = QHBoxLayout()
+        self.autofeature_start_run_check = QCheckBox("Start run after queue setup")
+        self.autofeature_start_run_check.setChecked(True)
+        self.autofeature_monitor_check = QCheckBox("Monitor completion")
+        self.autofeature_monitor_check.setChecked(True)
+        self.autofeature_notifications_check = QCheckBox("Send notifications")
+        self.autofeature_dry_run_check = QCheckBox("Dry run")
+        options_layout.addWidget(self.autofeature_start_run_check)
+        options_layout.addWidget(self.autofeature_monitor_check)
+        options_layout.addWidget(self.autofeature_notifications_check)
+        options_layout.addWidget(self.autofeature_dry_run_check)
+        options_layout.addStretch(1)
+
+        buttons_layout = QHBoxLayout()
+        self.autofeature_run_button = QPushButton("Run AutoFeature3.0")
+        self.autofeature_stop_button = QPushButton("Stop")
+        buttons_layout.addWidget(self.autofeature_run_button)
+        buttons_layout.addWidget(self.autofeature_stop_button)
+        buttons_layout.addStretch(1)
+
+        controls_layout.addLayout(range_layout)
+        controls_layout.addLayout(options_layout)
+        controls_layout.addLayout(buttons_layout)
+
+        self.autofeature_log = QPlainTextEdit()
+        self.autofeature_log.setReadOnly(True)
+
+        layout.addWidget(self.autofeature_status)
+        layout.addWidget(self.autofeature_table, stretch=2)
+        layout.addWidget(controls_group)
+        layout.addWidget(self.autofeature_log, stretch=1)
+
+        self.autofeature_run_button.clicked.connect(self._start_autofeature)
+        self.autofeature_stop_button.clicked.connect(self._stop_autofeature)
+        self.autofeature_start_spin.valueChanged.connect(
+            self._keep_autofeature_range_valid
+        )
+        self.autofeature_end_spin.valueChanged.connect(
+            self._keep_autofeature_range_valid
+        )
+        return tab
+
+    def _browse_project_dir(self):
+        start_dir = self.project_dir_edit.text().strip() or DEFAULT_PROJECT_DIRECTORY
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select project directory",
+            start_dir,
+        )
+        if selected:
+            self.project_dir_edit.setText(selected)
+
+    def _build_lists(self):
+        project_text = self.project_dir_edit.text().strip()
+        if not project_text:
+            self._show_error("Select the project directory first.")
+            return
+
+        project_dir = Path(project_text).expanduser()
+        try:
+            QApplication.setOverrideCursor(WAIT_CURSOR)
+            result = generate_mark_and_grain_lists(project_dir)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.project_dir = project_dir
+        self.mark_records = result["mark"]["records"]
+        self.grain_records = result["grains"]["records"]
+        self.mineral_check_records = result["mineral_check"]["records"]
+        self.mark_csv = result["mark"]["csv"]
+        self.grains_csv = result["grains"]["csv"]
+        self.mineral_check_csv = result["mineral_check"]["csv"]
+        self.corrected_rows = []
+        self.mineral_check_rows = []
+        self.corrected_csv = None
+        self.mineral_check_corrected_csv = None
+        self.sem_mark_positions_csv = None
+        self.corrected_sem_units = None
+        self.confirm_pair_start = 0
+        self.mineral_check_pair_start = 0
+
+        self._populate_summary_table(result)
+        self.mark_a_panel.set_records(self.mark_records, default_index=0)
+        self.mark_b_panel.set_records(self.mark_records, default_index=1)
+        self.tabs.setTabEnabled(1, len(self.mark_records) >= 2)
+        self.tabs.setTabEnabled(2, False)
+        self.tabs.setTabEnabled(3, False)
+        self.tabs.setTabEnabled(4, False)
+        self._populate_corrected_table()
+        self._populate_mineral_check_table()
+        self._show_confirm_pair()
+        self._show_mineral_check_pair()
+        self.autofeature_table.setRowCount(0)
+        self.autofeature_log.clear()
+        self.autofeature_status.setText(
+            "Create corrected positions before running AutoFeature3.0."
+        )
+        self._reset_autofeature_range()
+        self._set_autofeature_running(False)
+
+        if len(self.mark_records) < 2:
+            self.setup_status.setText(
+                f"Built lists, but found only {len(self.mark_records)} mark position(s)."
+            )
+            return
+
+        mineral_check_status = (
+            f" Found {len(self.mineral_check_records)} mineral check position(s)."
+            if self.mineral_check_csv is not None
+            else " No mineral check folder found."
+        )
+        self.setup_status.setText(
+            f"Built mark and grain lists in {self.project_dir}.{mineral_check_status}"
+        )
+        self.fiducial_status.setText(
+            f"Using {self.mark_csv.name} and {self.grains_csv.name}."
+        )
+        self.tabs.setCurrentIndex(1)
+
+    def _swap_marks(self):
+        index_a = self.mark_a_panel.selected_index()
+        index_b = self.mark_b_panel.selected_index()
+        sem_a = (self.mark_a_panel.sem_x.text(), self.mark_a_panel.sem_y.text())
+        sem_b = (self.mark_b_panel.sem_x.text(), self.mark_b_panel.sem_y.text())
+
+        self.mark_a_panel.combo.setCurrentIndex(index_b)
+        self.mark_b_panel.combo.setCurrentIndex(index_a)
+        self.mark_a_panel.sem_x.setText(sem_b[0])
+        self.mark_a_panel.sem_y.setText(sem_b[1])
+        self.mark_b_panel.sem_x.setText(sem_a[0])
+        self.mark_b_panel.sem_y.setText(sem_a[1])
+
+    def _fill_mark_from_mpo(self, panel):
+        try:
+            backend, values = _read_mpo_stage_values()
+            x_mm = _parse_mpo_float(values, "X (mm)")
+            y_mm = _parse_mpo_float(values, "Y (mm)")
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+
+        sem_units = self.sem_units_combo.currentText()
+        x_value = _convert_mpo_mm(x_mm, sem_units)
+        y_value = _convert_mpo_mm(y_mm, sem_units)
+        panel.set_sem_point(x_value, y_value)
+
+        conversion = "converted from MPO mm" if sem_units == "um" else "from MPO mm"
+        self.fiducial_status.setText(
+            f"Filled {panel.title()} SEM X/Y {conversion} "
+            f"using the {backend} backend."
+        )
+
+    def _set_stage_from_mark_panel(self, panel):
+        try:
+            sem_x, sem_y = panel.sem_point()
+            sem_units = self.sem_units_combo.currentText()
+            x_mm = _convert_to_mpo_mm(sem_x, sem_units)
+            y_mm = _convert_to_mpo_mm(sem_y, sem_units)
+            _set_mpo_stage_xy(x_mm, y_mm)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+
+        self.fiducial_status.setText(
+            f"Set stage for {panel.title()}: "
+            f"X {_format_mpo_mm(x_mm)} mm, Y {_format_mpo_mm(y_mm)} mm."
+        )
+
+    def _populate_summary_table(self, result):
+        self.summary_table.setRowCount(0)
+        folder_names = ["mark", "grains", "mineral_check"]
+        for row_index, folder_name in enumerate(folder_names):
+            data = result[folder_name]
+            records = data.get("records", [])
+            csv_path = data.get("csv")
+            image_list = data.get("image_list")
+            image_count = data.get(
+                "image_list_count",
+                sum(len(record.image_paths) for record in records),
+            )
+            self.summary_table.insertRow(row_index)
+            values = [
+                str(data["directory"]),
+                str(csv_path) if csv_path is not None else "Not found",
+                str(image_list) if image_list is not None else "",
+                str(len(records)),
+                str(image_count),
+            ]
+            for column, value in enumerate(values):
+                self.summary_table.setItem(
+                    row_index,
+                    column,
+                    QTableWidgetItem(value),
+                )
+
+    def _create_corrected_positions(self):
+        if self.mark_csv is None or self.grains_csv is None:
+            self._show_error("Build the mark and grain lists first.")
+            return
+
+        record_a = self.mark_a_panel.selected_record()
+        record_b = self.mark_b_panel.selected_record()
+        if record_a is None or record_b is None:
+            self._show_error("Select two mark images.")
+            return
+        if self.mark_a_panel.selected_index() == self.mark_b_panel.selected_index():
+            self._show_error("Mark A and Mark B must be different images.")
+            return
+
+        try:
+            sem_a = self.mark_a_panel.sem_point()
+            sem_b = self.mark_b_panel.sem_point()
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+
+        sem_units = self.sem_units_combo.currentText()
+        decimals = self.decimals_spin.value()
+        output_path = self.grains_csv.with_name("list_sem_corrected.csv")
+        mark_positions_path = self.mark_csv.with_name("SEM_mark_positions.csv")
+        mineral_check_output_path = (
+            self.mineral_check_csv.with_name("list_sem_corrected.csv")
+            if self.mineral_check_csv is not None
+            else None
+        )
+        mineral_check_count = 0
+
+        try:
+            _write_sem_mark_positions(
+                mark_positions_path,
+                [
+                    ("Mark A", record_a, sem_a),
+                    ("Mark B", record_b, sem_b),
+                ],
+                sem_units,
+            )
+            count, transform = write_corrected_csv(
+                input_path=self.grains_csv,
+                output_path=output_path,
+                micro_a=(record_a.x, record_a.y),
+                micro_b=(record_b.x, record_b.y),
+                sem_a=sem_a,
+                sem_b=sem_b,
+                sem_units=sem_units,
+                decimals=decimals,
+            )
+            rows = _read_csv_rows(output_path)
+            mineral_check_rows = []
+            if mineral_check_output_path is not None:
+                mineral_check_count, _mineral_check_transform = write_corrected_csv(
+                    input_path=self.mineral_check_csv,
+                    output_path=mineral_check_output_path,
+                    micro_a=(record_a.x, record_a.y),
+                    micro_b=(record_b.x, record_b.y),
+                    sem_a=sem_a,
+                    sem_b=sem_b,
+                    sem_units=sem_units,
+                    decimals=decimals,
+                )
+                mineral_check_rows = _read_csv_rows(mineral_check_output_path)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+
+        self.corrected_csv = output_path
+        self.mineral_check_corrected_csv = mineral_check_output_path
+        self.sem_mark_positions_csv = mark_positions_path
+        self.corrected_sem_units = sem_units
+        self.corrected_rows = rows
+        self.mineral_check_rows = mineral_check_rows
+        self.confirm_pair_start = 0
+        self.mineral_check_pair_start = 0
+        self._populate_corrected_table()
+        self._populate_mineral_check_table()
+        self._populate_autofeature_table()
+        self._reset_autofeature_range()
+        self._set_autofeature_running(False)
+        self._show_confirm_pair()
+        self._show_mineral_check_pair()
+        self.tabs.setTabEnabled(2, True)
+        self.tabs.setTabEnabled(3, bool(self.mineral_check_rows))
+        self.tabs.setTabEnabled(4, True)
+        self.tabs.setCurrentIndex(2)
+        mineral_check_message = (
+            f" Wrote {mineral_check_count} mineral check position(s) to "
+            f"{mineral_check_output_path}."
+            if mineral_check_output_path is not None
+            else " No mineral check folder was found."
+        )
+        self.fiducial_status.setText(
+            "Wrote "
+            f"{count} corrected positions to {output_path}. "
+            f"Saved SEM marks to {mark_positions_path}. "
+            f"{mineral_check_message} "
+            f"Ratio {transform.zoom_ratio:.6g}."
+        )
+        QTimer.singleShot(0, _warm_mpo_stage_controls)
+
+    def _populate_corrected_table(self):
+        self._populate_position_review_table(self.corrected_table, self.corrected_rows)
+
+    def _populate_mineral_check_table(self):
+        self._populate_position_review_table(
+            self.mineral_check_table, self.mineral_check_rows
+        )
+
+    def _populate_position_review_table(self, table, rows):
+        table.setRowCount(0)
+        for row_index, row in enumerate(rows):
+            image_path = _first_image_path(row.get("Image Paths"))
+            values = [
+                row.get("X", ""),
+                row.get("Y", ""),
+                row.get("Microscope_X", ""),
+                row.get("Microscope_Y", ""),
+                image_path.name if image_path else "",
+            ]
+            table.insertRow(row_index)
+            for column, value in enumerate(values):
+                table.setItem(
+                    row_index,
+                    column,
+                    QTableWidgetItem(str(value)),
+                )
+
+    def _populate_autofeature_table(self):
+        self.autofeature_table.setRowCount(0)
+        for table_row, row in enumerate(self.corrected_rows):
+            image_path = _first_image_path(row.get("Image Paths"))
+            values = [
+                table_row + 1,
+                row.get("X", ""),
+                row.get("Y", ""),
+                row.get("Microscope_X", ""),
+                row.get("Microscope_Y", ""),
+                image_path.name if image_path else "",
+            ]
+            self.autofeature_table.insertRow(table_row)
+            for column, value in enumerate(values):
+                self.autofeature_table.setItem(
+                    table_row,
+                    column,
+                    QTableWidgetItem(str(value)),
+                )
+
+        if self.corrected_rows:
+            self.autofeature_status.setText(
+                f"Ready to queue {len(self.corrected_rows)} corrected SEM "
+                f"position(s) from {self.corrected_csv}."
+            )
+        else:
+            self.autofeature_status.setText(
+                "Create corrected positions before running AutoFeature3.0."
+            )
+
+    def _reset_autofeature_range(self):
+        count = max(1, len(self.corrected_rows))
+        self.autofeature_start_spin.blockSignals(True)
+        self.autofeature_end_spin.blockSignals(True)
+        self.autofeature_start_spin.setRange(1, count)
+        self.autofeature_end_spin.setRange(1, count)
+        self.autofeature_start_spin.setValue(1)
+        self.autofeature_end_spin.setValue(count)
+        self.autofeature_start_spin.blockSignals(False)
+        self.autofeature_end_spin.blockSignals(False)
+
+    def _keep_autofeature_range_valid(self):
+        start = self.autofeature_start_spin.value()
+        end = self.autofeature_end_spin.value()
+        sender = self.sender()
+        if start > end and sender is self.autofeature_start_spin:
+            self.autofeature_end_spin.setValue(start)
+        elif start > end:
+            self.autofeature_start_spin.setValue(end)
+
+    def _start_autofeature(self):
+        if not self.corrected_rows:
+            self._show_error("Create corrected positions before running AutoFeature3.0.")
+            return
+        if self.autofeature_thread is not None:
+            self._show_error("AutoFeature3.0 is already running.")
+            return
+
+        start = self.autofeature_start_spin.value()
+        end = self.autofeature_end_spin.value()
+        selected_positions = list(
+            enumerate(self.corrected_rows[start - 1 : end], start=start)
+        )
+        if not selected_positions:
+            self._show_error("Select at least one corrected SEM position.")
+            return
+
+        dry_run = self.autofeature_dry_run_check.isChecked()
+        if not dry_run:
+            reply = QMessageBox.question(
+                self,
+                "Confirm AutoFeature3.0",
+                "This will use pyautogui for the SEM wizard and MPO Test "
+                "for stage movement. Continue?",
+                YES_BUTTON | NO_BUTTON,
+                NO_BUTTON,
+            )
+            if reply != YES_BUTTON:
+                return
+
+        self.autofeature_thread = QThread(self)
+        self.autofeature_runner = AutoFeatureRunner(
+            positions=selected_positions,
+            click_delay=self.autofeature_click_delay_spin.value(),
+            start_run=self.autofeature_start_run_check.isChecked(),
+            monitor_finish=self.autofeature_monitor_check.isChecked(),
+            enable_notifications=self.autofeature_notifications_check.isChecked(),
+            dry_run=dry_run,
+            sem_units=self.corrected_sem_units or self.sem_units_combo.currentText(),
+        )
+        self.autofeature_runner.moveToThread(self.autofeature_thread)
+        self.autofeature_thread.started.connect(self.autofeature_runner.run)
+        self.autofeature_runner.log.connect(self._append_autofeature_log)
+        self.autofeature_runner.progress.connect(self._handle_autofeature_progress)
+        self.autofeature_runner.finished.connect(self._handle_autofeature_finished)
+        self.autofeature_runner.finished.connect(self.autofeature_thread.quit)
+        self.autofeature_thread.finished.connect(
+            self.autofeature_runner.deleteLater
+        )
+        self.autofeature_thread.finished.connect(
+            self.autofeature_thread.deleteLater
+        )
+        self.autofeature_thread.finished.connect(self._clear_autofeature_refs)
+
+        self._set_autofeature_running(True)
+        self._append_autofeature_log(
+            f"Starting AutoFeature3.0 rows {start}-{end} from {self.corrected_csv}."
+        )
+        self.autofeature_thread.start()
+
+    def _stop_autofeature(self):
+        if self.autofeature_runner is None:
+            return
+        self._append_autofeature_log("Stop requested.")
+        self.autofeature_stop_button.setEnabled(False)
+        self.autofeature_runner.stop()
+
+    def _handle_autofeature_progress(self, display_index, _total):
+        self.autofeature_status.setText(
+            f"Running corrected row {display_index} of {len(self.corrected_rows)}."
+        )
+        table_row = display_index - 1
+        if 0 <= table_row < self.autofeature_table.rowCount():
+            self.autofeature_table.selectRow(table_row)
+
+    def _handle_autofeature_finished(self, _success, message):
+        self._append_autofeature_log(message)
+        self.autofeature_status.setText(message)
+        self._set_autofeature_running(False)
+
+    def _clear_autofeature_refs(self):
+        self.autofeature_runner = None
+        self.autofeature_thread = None
+
+    def _set_autofeature_running(self, running):
+        has_rows = bool(self.corrected_rows)
+        self.autofeature_run_button.setEnabled(has_rows and not running)
+        self.autofeature_stop_button.setEnabled(running)
+        self.autofeature_start_spin.setEnabled(has_rows and not running)
+        self.autofeature_end_spin.setEnabled(has_rows and not running)
+        self.autofeature_click_delay_spin.setEnabled(not running)
+        self.autofeature_start_run_check.setEnabled(not running)
+        self.autofeature_monitor_check.setEnabled(not running)
+        self.autofeature_notifications_check.setEnabled(not running)
+        self.autofeature_dry_run_check.setEnabled(not running)
+
+    def _append_autofeature_log(self, message):
+        timestamp = time.strftime("%H:%M:%S", time.localtime())
+        self.autofeature_log.appendPlainText(f"[{timestamp}] {message}")
+
+    def _show_confirm_pair(self):
+        if not self.corrected_rows:
+            self.confirm_panel_a.set_row(None)
+            self.confirm_panel_b.set_row(None)
+            self.confirm_status.setText("No corrected positions.")
+            return
+
+        first = self.confirm_pair_start
+        second = first + 1
+        self.confirm_panel_a.set_row(self.corrected_rows[first])
+        self.confirm_panel_b.set_row(
+            self.corrected_rows[second] if second < len(self.corrected_rows) else None
+        )
+        self.confirm_status.setText(
+            f"{first + 1}-{min(second + 1, len(self.corrected_rows))} "
+            f"of {len(self.corrected_rows)} | {self.corrected_csv}"
+        )
+        self.previous_pair_button.setEnabled(first > 0)
+        self.next_pair_button.setEnabled(second + 1 < len(self.corrected_rows))
+
+    def _show_mineral_check_pair(self):
+        if not self.mineral_check_rows:
+            self.mineral_check_panel_a.set_row(None)
+            self.mineral_check_panel_b.set_row(None)
+            if self.mineral_check_csv is None:
+                self.mineral_check_status.setText(
+                    "No mineral check folder found for this project."
+                )
+            elif self.mineral_check_corrected_csv is None:
+                self.mineral_check_status.setText(
+                    "Create corrected positions to review mineral check images."
+                )
+            else:
+                self.mineral_check_status.setText(
+                    "No mineral check corrected positions."
+                )
+            self.previous_mineral_check_pair_button.setEnabled(False)
+            self.next_mineral_check_pair_button.setEnabled(False)
+            return
+
+        first = self.mineral_check_pair_start
+        second = first + 1
+        self.mineral_check_panel_a.set_row(self.mineral_check_rows[first])
+        self.mineral_check_panel_b.set_row(
+            self.mineral_check_rows[second]
+            if second < len(self.mineral_check_rows)
+            else None
+        )
+        self.mineral_check_status.setText(
+            f"{first + 1}-{min(second + 1, len(self.mineral_check_rows))} "
+            f"of {len(self.mineral_check_rows)} | {self.mineral_check_corrected_csv}"
+        )
+        self.previous_mineral_check_pair_button.setEnabled(first > 0)
+        self.next_mineral_check_pair_button.setEnabled(
+            second + 1 < len(self.mineral_check_rows)
+        )
+
+    def _set_stage_from_panel(self, panel, status_label=None):
+        if panel.row is None:
+            self._show_error("No corrected position is shown for this image.")
+            return
+
+        try:
+            sem_x = _parse_corrected_float(panel.row, "X")
+            sem_y = _parse_corrected_float(panel.row, "Y")
+            sem_units = self.corrected_sem_units or self.sem_units_combo.currentText()
+            x_mm = _convert_to_mpo_mm(sem_x, sem_units)
+            y_mm = _convert_to_mpo_mm(sem_y, sem_units)
+            _set_mpo_stage_xy(x_mm, y_mm)
+        except Exception as exc:
+            self._show_error(str(exc))
+            return
+
+        image_name = panel.filename.text()
+        status_label = status_label or self.confirm_status
+        status_label.setText(
+            f"Set stage for {image_name}: "
+            f"X {_format_mpo_mm(x_mm)} mm, Y {_format_mpo_mm(y_mm)} mm."
+        )
+
+    def _previous_pair(self):
+        self.confirm_pair_start = max(0, self.confirm_pair_start - 2)
+        self._show_confirm_pair()
+
+    def _next_pair(self):
+        if self.confirm_pair_start + 2 < len(self.corrected_rows):
+            self.confirm_pair_start += 2
+        self._show_confirm_pair()
+
+    def _previous_mineral_check_pair(self):
+        self.mineral_check_pair_start = max(0, self.mineral_check_pair_start - 2)
+        self._show_mineral_check_pair()
+
+    def _next_mineral_check_pair(self):
+        if self.mineral_check_pair_start + 2 < len(self.mineral_check_rows):
+            self.mineral_check_pair_start += 2
+        self._show_mineral_check_pair()
+
+    def _show_error(self, message):
+        QMessageBox.critical(self, "Micro-to-SEM Workflow", message)
+
+
+def main():
+    app = QApplication(sys.argv)
+    window = MicroToSEMWorkflowApp()
+    window.show()
+    if hasattr(app, "exec"):
+        return app.exec()
+    return app.exec_()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
