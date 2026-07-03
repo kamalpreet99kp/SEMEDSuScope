@@ -8,8 +8,9 @@ Option Explicit
 ' own PasteSpecial command for Microsoft Excel Worksheet Object output.
 
 Private Const ORGANIZED_BLOCKS_SHEET_NAME As String = "Organized Blocks"
+Private Const WORD_PROJECT_FONT_SIZE As Long = 18
 Private Const WORD_SAMPLE_FONT_SIZE As Long = 14
-Private Const FIRST_PAGE_HEADER_RESERVED_POINTS As Double = 0#
+Private Const FIRST_PAGE_HEADER_RESERVED_POINTS As Double = 55#
 
 Public Sub CreateAuWordReportFromWorkbook()
     Dim excelApp As Object
@@ -17,6 +18,7 @@ Public Sub CreateAuWordReportFromWorkbook()
     Dim blockSheet As Object
     Dim workbookPath As String
     Dim outputPath As String
+    Dim projectNumber As String
     Dim sampleName As String
     Dim orientationChoice As String
     Dim pageOrientation As WdOrientation
@@ -30,6 +32,9 @@ Public Sub CreateAuWordReportFromWorkbook()
 
     workbookPath = PickExcelWorkbook()
     If Len(workbookPath) = 0 Then Exit Sub
+
+    projectNumber = InputBox("Enter Project No. for the Word report:", "Project No.", "XXX")
+    If Len(projectNumber) = 0 Then projectNumber = "XXX"
 
     orientationChoice = InputBox( _
         "Select sample type for Word orientation:" & vbCrLf & vbCrLf & _
@@ -52,16 +57,26 @@ Public Sub CreateAuWordReportFromWorkbook()
 
     Documents.Add
     ActiveDocument.PageSetup.Orientation = pageOrientation
-    ConfigureFirstPageSampleHeader ActiveDocument, sampleName
 
     For blockIndex = 1 To blockRanges.Count
         blockInfo = blockRanges(blockIndex)
-        Selection.EndKey Unit:=wdStory
         If blockIndex > 1 Then
-            Selection.TypeParagraph
-            Selection.EndKey Unit:=wdStory
+            Selection.InsertBreak Type:=wdPageBreak
         End If
+        Selection.EndKey Unit:=wdStory
         Selection.ParagraphFormat.Alignment = wdAlignParagraphCenter
+
+        If blockIndex = 1 Then
+            Selection.Font.Size = WORD_PROJECT_FONT_SIZE
+            Selection.Font.Bold = True
+            Selection.TypeText "Project No.: " & projectNumber
+            Selection.TypeParagraph
+
+            Selection.Font.Size = WORD_SAMPLE_FONT_SIZE
+            Selection.Font.Bold = True
+            Selection.TypeText "Sample Name: " & sampleName
+            Selection.TypeParagraph
+        End If
 
         Set blockRange = blockSheet.Range(blockSheet.Cells(blockInfo(0), blockInfo(1)), blockSheet.Cells(blockInfo(2), blockInfo(3)))
         PasteBlockAsExcelWorksheetObject blockRange, ActiveDocument, (blockIndex = 1)
@@ -153,19 +168,6 @@ Private Function RowHasContent(ByVal blockSheet As Object, ByVal rowNumber As Lo
     RowHasContent = False
 End Function
 
-Private Sub ConfigureFirstPageSampleHeader(ByVal document As Document, ByVal sampleName As String)
-    Dim headerRange As Range
-
-    document.PageSetup.DifferentFirstPageHeaderFooter = True
-    document.PageSetup.HeaderDistance = InchesToPoints(0.1)
-
-    Set headerRange = document.Sections(1).Headers(wdHeaderFooterFirstPage).Range
-    headerRange.Text = "Sample Name: " & sampleName
-    headerRange.Font.Size = WORD_SAMPLE_FONT_SIZE
-    headerRange.Font.Bold = True
-    headerRange.ParagraphFormat.Alignment = wdAlignParagraphCenter
-End Sub
-
 Private Sub PasteBlockAsExcelWorksheetObject(ByVal blockRange As Object, ByVal document As Document, ByVal reserveHeaderSpace As Boolean)
     Dim beforeInlineCount As Long
     Dim pastedShape As InlineShape
@@ -182,7 +184,6 @@ Private Sub PasteBlockAsExcelWorksheetObject(ByVal blockRange As Object, ByVal d
     Set pastedShape = document.InlineShapes(document.InlineShapes.Count)
     Selection.ParagraphFormat.Alignment = wdAlignParagraphCenter
     FitInlineShapeToPage pastedShape, document, reserveHeaderSpace
-    Selection.EndKey Unit:=wdStory
 End Sub
 
 Private Sub FitInlineShapeToPage(ByVal pastedShape As InlineShape, ByVal document As Document, ByVal reserveHeaderSpace As Boolean)
