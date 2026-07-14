@@ -1,0 +1,9 @@
+Known working version before QC additions
+========================================
+
+The user confirmed the Au Report Automation app was working well before the QC/check additions.
+That known-working code state is preserved in git at commit:
+
+7991916ee42defb6712963c1de8e811c04569fff
+
+If a rollback is ever needed, compare or restore the AuReportAutomation files from that commit.
