@@ -1,8 +1,8 @@
-"""Create one combined Ag-Sb-As ternary plot from a folder of CSV files.
+"""Create one Ag-Sb-As ternary plot for each CSV file in a selected folder.
 
 The input CSV files must contain Label, Ag, Sb, As, and Size columns. Ag, Sb,
 and As are expected to be wt%. The script leaves the input files unchanged and
-writes one HTML, PNG, and SVG plot in the selected folder.
+writes HTML, PNG, and SVG plots beside them.
 """
 
 import colorsys
@@ -18,12 +18,9 @@ import plotly.express as px
 REQUIRED_COLUMNS = ("Label", "Ag", "Sb", "As", "Size")
 FIXED_COLORS = {
     "sulfosalts": "green",
-    "cupropearceite-std": "red",
-    "stephanite-std": "blue",
-    "proustite-std": "brown",
-    "xanthoconite-std": "brown",
-    "proustite or xanthoconite-std": "brown",
-    "proustite-xanthoconite-std": "brown",
+    "cupropearceite": "red",
+    "stephanite": "blue",
+    "proustite-xanthoconite": "brown",
 }
 MAX_MARKER_SIZE = 20
 MARKER_SIZE_SCALING_FACTOR = 0.01
@@ -95,22 +92,14 @@ def read_and_prepare_csv(csv_file: Path) -> tuple[pd.DataFrame, int]:
     return dataframe, original_row_count - len(dataframe)
 
 
-def create_ternary_plot(
-    dataframes: list[pd.DataFrame], csv_files: list[Path], output_folder: Path
-) -> list[str]:
-    """Combine all valid CSV data and create one plot with a layer per file."""
-    prepared_dataframes = []
-    color_map = {}
-    for dataframe, csv_file in zip(dataframes, csv_files):
-        dataframe = dataframe.copy()
-        dataframe["Layer"] = csv_file.stem
-        prepared_dataframes.append(dataframe)
-        color_map[csv_file.stem] = color_for_file(csv_file)
-
-    combined = pd.concat(prepared_dataframes, ignore_index=True)
+def create_ternary_plot(dataframe: pd.DataFrame, csv_file: Path) -> list[str]:
+    """Create one interactive plot and attempt both static output formats."""
+    layer_name = csv_file.stem
+    dataframe["Layer"] = layer_name
+    color = color_for_file(csv_file)
 
     figure = px.scatter_ternary(
-        combined,
+        dataframe,
         a="Ag",
         b="Sb",
         c="As",
@@ -119,7 +108,7 @@ def create_ternary_plot(
         hover_name="Label",
         custom_data=["Ag", "Sb", "As", "Size"],
         size_max=MAX_MARKER_SIZE,
-        color_discrete_map=color_map,
+        color_discrete_map={layer_name: color},
     )
     figure.update_layout(
         title=None,
@@ -143,7 +132,7 @@ def create_ternary_plot(
             "Size: %{customdata[3]:.2f}<extra>%{fullData.name}</extra>"
         )
 
-    output_stem = output_folder / "Combined (Ternary Plot)"
+    output_stem = csv_file.with_name(f"{csv_file.stem} (Ternary Plot)")
     figure.write_html(str(output_stem) + ".html")
 
     warnings = []
@@ -173,8 +162,6 @@ def main() -> None:
         root.destroy()
         return
 
-    valid_dataframes = []
-    valid_csv_files = []
     completed = []
     skipped = []
     warnings = []
@@ -184,16 +171,12 @@ def main() -> None:
             if dataframe.empty:
                 skipped.append(f"{csv_file.name}: no valid data rows")
                 continue
-            valid_dataframes.append(dataframe)
-            valid_csv_files.append(csv_file)
+            warnings.extend(create_ternary_plot(dataframe, csv_file))
             completed.append(f"{csv_file.name} ({len(dataframe)} rows; {skipped_rows} skipped)")
         except Exception as error:
             skipped.append(f"{csv_file.name}: {error}")
 
-    if valid_dataframes:
-        warnings.extend(create_ternary_plot(valid_dataframes, valid_csv_files, folder))
-
-    summary = [f"Created one combined plot from {len(completed)} CSV file(s)."]
+    summary = [f"Created plots for {len(completed)} CSV file(s)."]
     if completed:
         summary.extend(["", "Processed:", *completed])
     if skipped:
