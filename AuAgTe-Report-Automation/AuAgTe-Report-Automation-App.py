@@ -1,4 +1,4 @@
-"""Au/Ag-Te report automation workflow app.
+"""Au-Ag-Te report automation workflow app.
 
 The app coordinates the existing, locally maintained laboratory scripts without
 copying their mineralogical rules into the GUI.  Each external script remains
@@ -12,10 +12,8 @@ import argparse
 import csv
 import json
 import os
-import re
 import runpy
 import sys
-import time
 import traceback
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime
@@ -25,7 +23,7 @@ from typing import Callable, Optional
 import pandas as pd
 
 
-APP_TITLE = "Au/Ag-Te Report Automation"
+APP_TITLE = "Au-Ag-Te Report Automation"
 PROJECT_FILE_NAME = "AuAgTe-Report-Project.json"
 APP_DIR = Path(__file__).resolve().parent
 REPO_ROOT = APP_DIR.parent
@@ -35,28 +33,14 @@ MICROSCOPE_PREP_SCRIPT = REPO_ROOT / "SEM-to-uScope-File-Prep" / "New-SEMtoMicro
 CROP_SCRIPT = REPO_ROOT / "Crop Images" / "Crop to Center_All Images at once.py"
 MASTER_SCRIPT = AG_LIBERATION_DIR / "V3.Reports-SEMData-uScopeImagesCorelation-HidesColumns.py"
 FINAL_SCRIPT = AG_LIBERATION_DIR / "Image Links_CorrFactor.py"
-APPENDIX_SCRIPT = REPO_ROOT / "Editing-EDS-Exported-Word-Files" / "Arrange_Microscope_Images_By_Mineral.py"
-TERNARY_SCRIPT = AG_LIBERATION_DIR / "Ag-Sb-As-Ternary-Plots.py"
-PICKED_DIRECTORY_MARKER = "__AUAGTE_PICKED_DIRECTORY__="
 
 
-def run_external_script(
-    script_path: Path,
-    input_path: Path | None,
-    directory: Path | None,
-    crop_value: float | None = None,
-    suppress_messageboxes: bool = False,
-) -> int:
+def run_external_script(script_path: Path, input_path: Path | None, directory: Path | None) -> int:
     """Run a legacy script while supplying known answers to its first pickers."""
     import tkinter.filedialog as filedialog
-    import tkinter.messagebox as messagebox
 
     original_open = filedialog.askopenfilename
     original_directory = filedialog.askdirectory
-    original_message_functions = {
-        name: getattr(messagebox, name)
-        for name in ("showinfo", "showwarning", "showerror")
-    }
 
     if input_path:
         supplied_file = str(input_path)
@@ -64,44 +48,9 @@ def run_external_script(
     if directory:
         supplied_directory = str(directory)
         filedialog.askdirectory = lambda *args, **kwargs: supplied_directory
-    else:
-        def recorded_directory_picker(*args, **kwargs):
-            selected_directory = original_directory(*args, **kwargs)
-            if selected_directory:
-                print(f"{PICKED_DIRECTORY_MARKER}{selected_directory}", flush=True)
-            return selected_directory
-
-        filedialog.askdirectory = recorded_directory_picker
-
-    if suppress_messageboxes:
-        def log_messagebox(title, message, **_kwargs):
-            print(f"{title}: {message}", flush=True)
-            return "ok"
-
-        for function_name in original_message_functions:
-            setattr(messagebox, function_name, log_messagebox)
 
     try:
-        if crop_value is None:
-            runpy.run_path(str(script_path), run_name="__main__")
-        else:
-            source = script_path.read_text(encoding="utf-8")
-            replacement = rf"\g<1>{crop_value:.2f}\g<2>"
-            source, replacement_count = re.subn(
-                r"(?m)^(\s*crop_value\s*=\s*)(?:\d+(?:\.\d*)?|\.\d+)(\s*(?:#.*)?)$",
-                replacement,
-                source,
-                count=1,
-            )
-            if replacement_count != 1:
-                raise RuntimeError(f"Could not find crop_value in {script_path.name}.")
-            script_globals = {
-                "__name__": "__main__",
-                "__file__": str(script_path),
-                "__package__": None,
-                "__cached__": None,
-            }
-            exec(compile(source, str(script_path), "exec"), script_globals)
+        runpy.run_path(str(script_path), run_name="__main__")
         return 0
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else (0 if exc.code is None else 1)
@@ -111,8 +60,6 @@ def run_external_script(
     finally:
         filedialog.askopenfilename = original_open
         filedialog.askdirectory = original_directory
-        for function_name, original_function in original_message_functions.items():
-            setattr(messagebox, function_name, original_function)
 
 
 def runner_main() -> int | None:
@@ -121,8 +68,6 @@ def runner_main() -> int | None:
     parser.add_argument("--run-script")
     parser.add_argument("--input")
     parser.add_argument("--directory")
-    parser.add_argument("--crop-value", type=float)
-    parser.add_argument("--suppress-messageboxes", action="store_true")
     args, _ = parser.parse_known_args()
     if not args.run_script:
         return None
@@ -130,8 +75,6 @@ def runner_main() -> int | None:
         Path(args.run_script),
         Path(args.input) if args.input else None,
         Path(args.directory) if args.directory else None,
-        args.crop_value,
-        args.suppress_messageboxes,
     )
 
 
@@ -142,11 +85,10 @@ if runner_result is not None:
 
 try:
     from PySide6.QtCore import QProcess, QSettings, Qt, QUrl
-    from PySide6.QtGui import QColor, QDesktopServices, QPixmap
+    from PySide6.QtGui import QDesktopServices
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
-        QDoubleSpinBox,
         QFileDialog,
         QFrame,
         QGroupBox,
@@ -164,11 +106,10 @@ try:
 except ImportError:
     try:
         from PySide2.QtCore import QProcess, QSettings, Qt, QUrl
-        from PySide2.QtGui import QColor, QDesktopServices, QPixmap
+        from PySide2.QtGui import QDesktopServices
         from PySide2.QtWidgets import (
             QApplication,
             QComboBox,
-            QDoubleSpinBox,
             QFileDialog,
             QFrame,
             QGroupBox,
@@ -201,12 +142,6 @@ class ProjectState:
     phase_b_directory: str = ""
     master_file_5: str = ""
     final_file_6: str = ""
-    phase_b_crop_value: float = 0.4
-    phase_c_appendix_directory: str = ""
-    phase_c_crop_value: float = 0.4
-    appendix_file: str = ""
-    ternary_directory: str = ""
-    ternary_html: str = ""
     updated_at: str = ""
 
     @classmethod
@@ -221,41 +156,6 @@ def qt_horizontal() -> object:
 
 def path_exists(value: str) -> bool:
     return bool(value) and Path(value).exists()
-
-
-def find_amtel_logo_path() -> Path | None:
-    """Find the AMTEL image previously supplied for the Au Automation app.
-
-    The logo is intentionally loaded from the local checkout rather than copied
-    or recreated. This lets both automation apps use the same image on the lab
-    computer, even when the logo asset is not tracked by Git.
-    """
-    supported_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-    search_directories = [APP_DIR, REPO_ROOT / "AuReportAutomation"]
-    candidates: list[Path] = []
-
-    for directory in search_directories:
-        if not directory.exists():
-            continue
-        candidates.extend(
-            path
-            for path in directory.rglob("*")
-            if path.is_file() and path.suffix.lower() in supported_extensions
-        )
-
-    def logo_priority(path: Path) -> tuple[int, str]:
-        normalized_name = path.stem.lower().replace("_", " ").replace("-", " ")
-        if "amtel" in normalized_name and "logo" in normalized_name:
-            priority = 0
-        elif "amtel" in normalized_name:
-            priority = 1
-        elif "logo" in normalized_name:
-            priority = 2
-        else:
-            priority = 3
-        return priority, str(path).lower()
-
-    return min(candidates, key=logo_priority) if candidates else None
 
 
 def unique_excel_output(source: Path) -> Path:
@@ -303,20 +203,14 @@ def convert_full_analysis(source: Path) -> Path:
 class StepCard(QGroupBox):
     """A consistent workflow card with status, paths, and action buttons."""
 
-    def __init__(self, title: str, description: str = "", accent_color: str = "#236aa1"):
+    def __init__(self, title: str, description: str):
         super().__init__(title)
         self.setObjectName("stepCard")
-        self.setStyleSheet(
-            "QGroupBox#stepCard {"
-            f"border-top: 4px solid {accent_color};"
-            "}"
-        )
         layout = QVBoxLayout(self)
-        if description:
-            description_label = QLabel(description)
-            description_label.setWordWrap(True)
-            description_label.setObjectName("description")
-            layout.addWidget(description_label)
+        description_label = QLabel(description)
+        description_label.setWordWrap(True)
+        description_label.setObjectName("description")
+        layout.addWidget(description_label)
         self.status = QLabel("Not started")
         self.status.setWordWrap(True)
         self.status.setObjectName("statusPending")
@@ -324,9 +218,7 @@ class StepCard(QGroupBox):
         self.path_label = QLabel("No output selected")
         self.path_label.setWordWrap(True)
         self.path_label.setTextInteractionFlags(getattr(Qt, "TextSelectableByMouse"))
-        # Paths remain available to the workflow controller and activity log,
-        # but are intentionally hidden to keep each step card uncluttered.
-        self.path_label.hide()
+        layout.addWidget(self.path_label)
         self.controls = QHBoxLayout()
         layout.addLayout(self.controls)
 
@@ -353,10 +245,6 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self.process: QProcess | None = None
         self.pending_step: str = ""
         self.pending_output: Path | None = None
-        self.pending_input_path: Path | None = None
-        self.pending_directory: Path | None = None
-        self.pending_selected_directories: list[Path] = []
-        self.pending_started_at: float = 0.0
         self.setWindowTitle(APP_TITLE)
         self.resize(1180, 860)
         self._build_ui()
@@ -368,47 +256,26 @@ class AuAgTeReportAutomationApp(QMainWindow):
         root = QVBoxLayout(central)
 
         heading_row = QHBoxLayout()
-        brand_panel = QWidget()
-        brand_panel.setObjectName("brandPanel")
-        brand_layout = QHBoxLayout(brand_panel)
-        brand_layout.setContentsMargins(12, 5, 14, 5)
-        brand_layout.setSpacing(12)
-
-        self.logo_label = QLabel()
-        self.logo_label.setObjectName("amtelLogo")
-        self.logo_label.setFixedSize(250, 68)
-        self.logo_label.setAlignment(getattr(Qt, "AlignCenter"))
-        self._load_amtel_logo()
-        brand_layout.addWidget(self.logo_label)
-
-        app_name = QLabel("Au/Ag-Te Report Automation")
-        app_name.setObjectName("appName")
-        brand_layout.addWidget(app_name)
-        heading_row.addWidget(brand_panel)
+        heading = QLabel(APP_TITLE)
+        heading.setObjectName("heading")
+        heading_row.addWidget(heading)
         heading_row.addStretch()
-
-        self.sample_label = QLabel("Sample: Not selected")
-        self.sample_label.setObjectName("sampleName")
-        self.sample_label.setToolTip("Sample name taken from the selected Full Analysis filename.")
-        heading_row.addWidget(self.sample_label)
-        heading_row.addSpacing(12)
-
         for label, callback in (("New Project", self.new_project), ("Open Project", self.open_project), ("Save Project", self.save_project)):
             button = QPushButton(label)
             button.clicked.connect(callback)
             heading_row.addWidget(button)
         root.addLayout(heading_row)
 
+        self.sample_summary = QLabel("No sample loaded")
+        self.sample_summary.setObjectName("summary")
+        self.sample_summary.setWordWrap(True)
+        root.addWidget(self.sample_summary)
+
         self.tabs = QTabWidget()
         self.phase_a_tab = self._build_phase_a()
         self.phase_b_tab = self._build_phase_b()
-        self.phase_c_tab = self._build_phase_c()
-        self.tabs.addTab(self.phase_a_tab, "Phase A-Before uScope Acq.")
-        self.tabs.addTab(self.phase_b_tab, "Phase B-After uScope Acq.")
-        self.tabs.addTab(self.phase_c_tab, "Phase C-Appendices && Ternary Plots")
-        self.tabs.tabBar().setTabTextColor(0, QColor("#176b5d"))
-        self.tabs.tabBar().setTabTextColor(1, QColor("#7a4d9b"))
-        self.tabs.tabBar().setTabTextColor(2, QColor("#9a641d"))
+        self.tabs.addTab(self.phase_a_tab, "Phase A — SEM / AZtec Preparation")
+        self.tabs.addTab(self.phase_b_tab, "Phase B — Microscope Images / Final Report")
         root.addWidget(self.tabs, 1)
 
         log_group = QGroupBox("Activity log")
@@ -422,107 +289,40 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self.setCentralWidget(central)
         self.setStyleSheet("""
             QMainWindow { background: #f3f6f9; }
-            QWidget#brandPanel { background: white; border: 1px solid #d3dde7; border-radius: 7px; }
-            QLabel#amtelLogo { border: none; background: transparent; color: #153f66; font-size: 24px; font-weight: 800; }
-            QLabel#appName { border: none; background: transparent; color: #425d75; font-size: 20px; font-weight: 700; }
-            QLabel#sampleName { color: #204b70; background: #edf4fa; border: 1px solid #b9ccdc; border-radius: 6px; padding: 8px 12px; font-size: 13px; font-weight: 700; }
-            QGroupBox#stepCard { background: white; border: 1px solid #cbd5df; border-radius: 8px; margin-top: 18px; padding: 15px 12px 12px 12px; font-weight: 700; font-size: 15px; }
-            QGroupBox#stepCard::title { subcontrol-origin: margin; subcontrol-position: top left; left: 14px; top: 1px; padding: 2px 8px; background: white; color: #183b59; }
+            QLabel#heading { font-size: 24px; font-weight: 700; color: #17324d; }
+            QLabel#summary { background: #e8f1fa; border: 1px solid #b7cde1; border-radius: 5px; padding: 9px; }
+            QGroupBox#stepCard { background: white; border: 1px solid #cbd5df; border-radius: 7px; margin-top: 12px; padding: 12px; font-weight: 700; }
+            QGroupBox#stepCard::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
             QLabel#description { color: #435466; font-weight: 400; }
-            QLabel#cropExplanation { color: #657587; font-size: 12px; font-weight: 400; }
             QLabel#statusPending { color: #7a5a00; font-weight: 700; }
             QLabel#statusOk { color: #176b3a; font-weight: 700; }
             QLabel#statusError { color: #a32121; font-weight: 700; }
             QPushButton { padding: 6px 11px; }
             QPushButton#primaryButton { background: #236aa1; color: white; border: 0; border-radius: 4px; padding: 8px 13px; font-weight: 700; }
-            QTabBar::tab { min-width: 245px; padding: 10px 18px; font-weight: 700; background: #e5ebf1; border: 1px solid #c4ced8; }
-            QTabBar::tab:selected { background: white; border-bottom-color: white; }
         """)
 
-    def _load_amtel_logo(self) -> None:
-        logo_path = find_amtel_logo_path()
-        if logo_path is None:
-            self.logo_label.setText("AMTEL")
-            self.logo_label.setToolTip(
-                "AMTEL logo image was not found in AuReportAutomation or "
-                "AuAgTe-Report-Automation."
-            )
-            return
-
-        pixmap = QPixmap(str(logo_path))
-        if pixmap.isNull():
-            self.logo_label.setText("AMTEL")
-            self.logo_label.setToolTip(f"Could not load AMTEL logo: {logo_path}")
-            return
-
-        aspect_mode = getattr(getattr(Qt, "AspectRatioMode", Qt), "KeepAspectRatio")
-        transform_mode = getattr(getattr(Qt, "TransformationMode", Qt), "SmoothTransformation")
-        self.logo_label.setPixmap(
-            pixmap.scaled(
-                self.logo_label.size(),
-                aspect_mode,
-                transform_mode,
-            )
-        )
-        self.logo_label.setToolTip(str(logo_path))
-
-    def _scroll_page(self, content_layout: QVBoxLayout, background_color: str) -> QScrollArea:
+    def _scroll_page(self, content_layout: QVBoxLayout) -> QScrollArea:
         container = QWidget()
-        container.setObjectName("phaseContent")
         container.setLayout(content_layout)
         area = QScrollArea()
         area.setWidgetResizable(True)
         area.setFrameShape(QFrame.NoFrame)
         area.setWidget(container)
-        area.setStyleSheet(
-            "QScrollArea { border: none;"
-            f" background-color: {background_color};"
-            "}"
-            "QScrollArea > QWidget > QWidget {"
-            f" background-color: {background_color};"
-            "}"
-            "QWidget#phaseContent {"
-            f" background-color: {background_color};"
-            "}"
-        )
         return area
-
-    def _add_crop_control(self, card: StepCard, phase: str) -> QDoubleSpinBox:
-        row = QHBoxLayout()
-        label = QLabel("Crop fraction (0.1–1.0):")
-        label.setToolTip(
-            "Fraction of the original image width and height retained around "
-            "the selected crop centre."
-        )
-        row.addWidget(label)
-        spin_box = QDoubleSpinBox()
-        spin_box.setRange(0.1, 1.0)
-        spin_box.setSingleStep(0.1)
-        spin_box.setDecimals(1)
-        spin_box.setValue(0.4)
-        spin_box.setToolTip(label.toolTip())
-        row.addWidget(spin_box)
-        explanation = QLabel("1.0 keeps the complete image; smaller values crop more tightly.")
-        explanation.setObjectName("cropExplanation")
-        row.addWidget(explanation)
-        row.addStretch()
-        card.layout().insertLayout(card.layout().count() - 1, row)
-        spin_box.valueChanged.connect(
-            lambda value: setattr(self.state, f"phase_{phase}_crop_value", float(value))
-        )
-        return spin_box
 
     def _build_phase_a(self) -> QWidget:
         wrapper = QWidget()
         outer = QVBoxLayout(wrapper)
         content = QVBoxLayout()
 
-        self.raw_card = StepCard("A1. Full Analysis → XLSX", accent_color="#2b8a78")
-        self.raw_card.add_button("Select Full Analysis File", self.select_and_convert_raw, True)
-        self.raw_card.add_button("Open XLSX File", lambda: self.open_state_path("excel_file_2"))
+        self.raw_card = StepCard("A1. Full Analysis → Excel (Files 1 and 2)", "Select the raw AZtec Full Analysis export. The sample name and Phase A directory are taken from it, and a new XLSX copy is created beside it.")
+        self.raw_card.add_button("Select Full Analysis and Convert", self.select_and_convert_raw, True)
+        self.raw_card.add_button("Use Existing File 2", self.select_existing_file_2)
+        self.raw_card.add_button("Open File 2", lambda: self.open_state_path("excel_file_2"))
+        self.raw_card.add_button("Open Phase A Folder", lambda: self.open_state_path("phase_a_directory"))
         content.addWidget(self.raw_card)
 
-        self.category_card = StepCard("A2. Categorize Minerals", accent_color="#2b8a78")
+        self.category_card = StepCard("A2. Categorize Minerals (File 3)", "Choose the current project-specific categorization script from Ag-Liberation. It runs against File 2 and creates a separate categorized workbook.")
         category_row = QHBoxLayout()
         category_row.addWidget(QLabel("Categorization script:"))
         self.category_combo = QComboBox()
@@ -530,26 +330,28 @@ class AuAgTeReportAutomationApp(QMainWindow):
         refresh = QPushButton("Refresh scripts")
         refresh.clicked.connect(self.refresh_category_scripts)
         category_row.addWidget(refresh)
-        self.category_card.layout().insertLayout(1, category_row)
+        self.category_card.layout().insertLayout(2, category_row)
         self.category_card.add_button("Run Categorization", self.run_categorization, True)
-        self.category_card.add_button("Use Existing File", self.select_existing_file_3)
-        self.category_card.add_button("Open File", lambda: self.open_state_path("categorized_file_3"))
+        self.category_card.add_button("Use Existing File 3", self.select_existing_file_3)
+        self.category_card.add_button("Open File 3", lambda: self.open_state_path("categorized_file_3"))
+        self.category_card.add_button("Open Script", self.open_selected_category_script)
         content.addWidget(self.category_card)
 
-        self.duplicates_card = StepCard("A3. Find Duplicate && Review", accent_color="#2b8a78")
+        self.duplicates_card = StepCard("A3. Find and Review Duplicates (File 4)", "Run the fixed duplicate checker on File 3. It creates a DUPS_ONLY workbook; review it and manually remove confirmed duplicates from File 3.")
         self.duplicates_card.add_button("Run Duplicate Check", self.run_duplicates, True)
-        self.duplicates_card.add_button("Select Existing Categorized File", self.select_existing_file_3)
-        self.duplicates_card.add_button("Open File", lambda: self.open_state_path("duplicates_file_4"))
+        self.duplicates_card.add_button("Use Existing File 4", lambda: self.select_existing_output("duplicates_file_4", "Select duplicates-only workbook"))
+        self.duplicates_card.add_button("Open File 3", lambda: self.open_state_path("categorized_file_3"))
+        self.duplicates_card.add_button("Open File 4", lambda: self.open_state_path("duplicates_file_4"))
         content.addWidget(self.duplicates_card)
 
-        self.prep_card = StepCard("A4. Prepare SEM-to-uScope Files", accent_color="#2b8a78")
+        self.prep_card = StepCard("A4. Prepare Microscope Coordinates", "After manual duplicate cleanup, create SEM-pos-um.xlsx and Micro-After-Correction.csv beside File 3. These complete the transfer package for microscopy.")
         self.prep_card.add_button("Generate Coordinate Files", self.run_microscope_prep, True)
-        self.prep_card.add_button("Use Existing Categorized File", self.select_existing_file_3)
-        self.prep_card.add_button("Open Files", self.open_coordinate_files)
+        self.prep_card.add_button("Use Existing Outputs", self.select_existing_prep_outputs)
+        self.prep_card.add_button("Open SEM Positions", lambda: self.open_state_path("sem_positions_file"))
+        self.prep_card.add_button("Open Correction CSV", lambda: self.open_state_path("correction_csv"))
         content.addWidget(self.prep_card)
         content.addStretch()
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(self._scroll_page(content, "#eaf7f2"))
+        outer.addWidget(self._scroll_page(content))
         return wrapper
 
     def _build_phase_b(self) -> QWidget:
@@ -557,54 +359,28 @@ class AuAgTeReportAutomationApp(QMainWindow):
         outer = QVBoxLayout(wrapper)
         content = QVBoxLayout()
 
-        self.crop_card = StepCard("B1. Crop uScope Images", "Select parent directory with all categories/folders", "#8a5aa5")
-        self.phase_b_crop_spin = self._add_crop_control(self.crop_card, "b")
-        self.crop_card.add_button("Select Parent Directory", self.run_cropper, True)
-        self.crop_card.add_button("Open Parent Directory", lambda: self.open_state_path("phase_b_directory"))
+        self.crop_card = StepCard("B1. Crop Microscope Images", "Select the transferred Phase B parent directory. The interactive cropper processes chosen category folders and creates cropped subfolders.")
+        self.crop_card.add_button("Select Folder and Run Cropper", self.run_cropper, True)
+        self.crop_card.add_button("Use Existing Phase B Folder", self.select_phase_b_directory)
+        self.crop_card.add_button("Open Phase B Folder", lambda: self.open_state_path("phase_b_directory"))
+        self.crop_card.add_button("Open Crop Script", lambda: self.open_path(CROP_SCRIPT))
         content.addWidget(self.crop_card)
 
-        self.master_card = StepCard("B2. Master Workbook: EDS Data + uScope Images", 'This step requires Original "Categorized File" & "Micro-After-Correction.csv" in the parent directory', "#8a5aa5")
+        self.master_card = StepCard("B2. Build Master Workbook (File 5)", "Select the transferred categorized File 3 if it is not already known in Phase B. The script requires Micro-After-Correction.csv and cropped category folders beside it.")
         self.master_card.add_button("Build Master Workbook", self.run_master, True)
-        self.master_card.add_button("Open File", lambda: self.open_state_path("master_file_5"))
+        self.master_card.add_button("Use Existing File 5", lambda: self.select_existing_output("master_file_5", "Select MASTER workbook"))
+        self.master_card.add_button("Open File 5", lambda: self.open_state_path("master_file_5"))
+        self.master_card.add_button("Open Debug Log", self.open_master_log)
         content.addWidget(self.master_card)
 
-        self.final_card = StepCard("B3. Add Image Links && Formulas", accent_color="#8a5aa5")
+        self.final_card = StepCard("B3. Add Links, Correction Columns and Formulas (File 6)", "Run the final script against File 5. It adds quick image links, Corr %, Area Orig, New Brea, New Len and Asso while preserving File 5.")
         self.final_card.add_button("Create Final File", self.run_final, True)
-        self.final_card.add_button("Use Existing Master Workbook", lambda: self.select_existing_output("master_file_5", "Select master workbook"))
-        self.final_card.add_button("Open File", lambda: self.open_state_path("final_file_6"))
+        self.final_card.add_button("Use Existing File 6", lambda: self.select_existing_output("final_file_6", "Select final workbook"))
+        self.final_card.add_button("Open File 5", lambda: self.open_state_path("master_file_5"))
+        self.final_card.add_button("Open Final File 6", lambda: self.open_state_path("final_file_6"))
         content.addWidget(self.final_card)
         content.addStretch()
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(self._scroll_page(content, "#f4edfa"))
-        return wrapper
-
-    def _build_phase_c(self) -> QWidget:
-        wrapper = QWidget()
-        outer = QVBoxLayout(wrapper)
-        content = QVBoxLayout()
-
-        self.appendix_crop_card = StepCard(
-            "C1. Crop Appendix Images",
-            "Select parent directory with category folders containing the manually selected images",
-            "#d08a2e",
-        )
-        self.phase_c_crop_spin = self._add_crop_control(self.appendix_crop_card, "c")
-        self.appendix_crop_card.add_button("Run Cropper", self.run_appendix_cropper, True)
-        content.addWidget(self.appendix_crop_card)
-
-        self.appendix_card = StepCard("C2. Create Appendices", accent_color="#d08a2e")
-        self.appendix_card.add_button("Create Appendices", self.run_appendix_script, True)
-        self.appendix_card.add_button("Open File", lambda: self.open_state_path("appendix_file"))
-        content.addWidget(self.appendix_card)
-
-        self.ternary_card = StepCard("C3. Create Ternary Plots", accent_color="#d08a2e")
-        self.ternary_card.add_button("Create Ternary Plots", self.run_ternary_script, True)
-        self.ternary_card.add_button("Open File", lambda: self.open_state_path("ternary_html"))
-        content.addWidget(self.ternary_card)
-
-        content.addStretch()
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(self._scroll_page(content, "#fff6e5"))
+        outer.addWidget(self._scroll_page(content))
         return wrapper
 
     def append_log(self, message: str) -> None:
@@ -616,17 +392,8 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self.category_combo.clear()
         scripts = []
         if AG_LIBERATION_DIR.exists():
-            excluded_scripts = {
-                MASTER_SCRIPT.resolve(),
-                FINAL_SCRIPT.resolve(),
-                TERNARY_SCRIPT.resolve(),
-            }
             scripts = sorted(
-                (
-                    path
-                    for path in AG_LIBERATION_DIR.glob("*.py")
-                    if path.resolve() not in excluded_scripts
-                ),
+                (path for path in AG_LIBERATION_DIR.glob("*.py") if "categor" in path.name.lower()),
                 key=lambda path: path.name.lower(),
             )
         for path in scripts:
@@ -639,39 +406,30 @@ class AuAgTeReportAutomationApp(QMainWindow):
 
     def refresh_all(self) -> None:
         self.refresh_category_scripts()
-        self.sample_label.setText(f"Sample: {self.state.sample_name or 'Not selected'}")
-        self.phase_b_crop_spin.blockSignals(True)
-        self.phase_b_crop_spin.setValue(float(self.state.phase_b_crop_value))
-        self.phase_b_crop_spin.blockSignals(False)
-        self.phase_c_crop_spin.blockSignals(True)
-        self.phase_c_crop_spin.setValue(float(self.state.phase_c_crop_value))
-        self.phase_c_crop_spin.blockSignals(False)
-        self._refresh_card(self.raw_card, self.state.excel_file_2)
-        self._refresh_card(self.category_card, self.state.categorized_file_3)
-        self._refresh_card(self.duplicates_card, self.state.duplicates_file_4)
+        self.sample_summary.setText(
+            f"Sample: {self.state.sample_name or 'Not selected'}    |    "
+            f"Phase A: {self.state.phase_a_directory or 'Not selected'}    |    "
+            f"Phase B: {self.state.phase_b_directory or 'Not selected'}"
+        )
+        self._refresh_card(self.raw_card, self.state.excel_file_2, "File 2 ready")
+        self._refresh_card(self.category_card, self.state.categorized_file_3, "File 3 ready")
+        self._refresh_card(self.duplicates_card, self.state.duplicates_file_4, "File 4 ready for manual review")
         prep_ready = path_exists(self.state.sem_positions_file) and path_exists(self.state.correction_csv)
         self.prep_card.path_label.setText(f"{self.state.sem_positions_file or 'SEM-pos-um.xlsx not selected'}\n{self.state.correction_csv or 'Micro-After-Correction.csv not selected'}")
-        self.prep_card.set_state("Status: Completed" if prep_ready else "Status: Not completed", "ok" if prep_ready else "pending")
-        cropped_count = self._cropped_folder_count(self.state.phase_b_directory)
+        self.prep_card.set_state("Phase A coordinate package ready" if prep_ready else "Not completed", "ok" if prep_ready else "pending")
+        cropped_count = self._cropped_folder_count()
         self.crop_card.path_label.setText(self.state.phase_b_directory or "No Phase B directory selected")
-        self.crop_card.set_state("Status: Completed" if cropped_count else "Status: Not completed", "ok" if cropped_count else "pending")
-        self._refresh_card(self.master_card, self.state.master_file_5)
-        self._refresh_card(self.final_card, self.state.final_file_6)
-        appendix_cropped_count = self._cropped_folder_count(self.state.phase_c_appendix_directory)
-        self.appendix_crop_card.set_state(
-            "Status: Completed" if appendix_cropped_count else "Status: Not completed",
-            "ok" if appendix_cropped_count else "pending",
-        )
-        self._refresh_card(self.appendix_card, self.state.appendix_file)
-        self._refresh_card(self.ternary_card, self.state.ternary_html)
+        self.crop_card.set_state(f"{cropped_count} cropped folder(s) detected" if cropped_count else "Not completed", "ok" if cropped_count else "pending")
+        self._refresh_card(self.master_card, self.state.master_file_5, "File 5 ready")
+        self._refresh_card(self.final_card, self.state.final_file_6, "Final File 6 ready")
 
-    def _refresh_card(self, card: StepCard, value: str) -> None:
+    def _refresh_card(self, card: StepCard, value: str, complete_text: str) -> None:
         card.path_label.setText(value or "No output selected")
         exists = path_exists(value)
-        card.set_state("Status: Completed" if exists else "Status: Not completed", "ok" if exists else "pending")
+        card.set_state(complete_text if exists else "Not completed", "ok" if exists else "pending")
 
-    def _cropped_folder_count(self, directory_value: str) -> int:
-        directory = Path(directory_value) if directory_value else None
+    def _cropped_folder_count(self) -> int:
+        directory = Path(self.state.phase_b_directory) if self.state.phase_b_directory else None
         if not directory or not directory.exists():
             return 0
         return sum(1 for child in directory.iterdir() if child.is_dir() and (child / "cropped").is_dir())
@@ -693,16 +451,22 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self.state.sample_name = source.stem
         self.state.phase_a_directory = str(source.parent)
         self.state.excel_file_2 = str(output)
-        self.append_log(f"Created XLSX file: {output}")
+        self.append_log(f"Created File 2: {output}")
         self.auto_save()
 
+    def select_existing_file_2(self) -> None:
+        selected = self.choose_excel("Select existing File 2", self.state.phase_a_directory)
+        if selected:
+            self.state.excel_file_2 = str(selected)
+            self.state.phase_a_directory = str(selected.parent)
+            if not self.state.sample_name:
+                self.state.sample_name = selected.stem.removesuffix("_Excel")
+            self.auto_save()
+
     def select_existing_file_3(self) -> None:
-        selected = self.choose_excel("Select Categorization File", self.state.phase_a_directory or self.state.phase_b_directory)
+        selected = self.choose_excel("Select categorized File 3", self.state.phase_a_directory or self.state.phase_b_directory)
         if selected:
             self.state.categorized_file_3 = str(selected)
-            self.state.duplicates_file_4 = ""
-            self.state.sem_positions_file = ""
-            self.state.correction_csv = ""
             if not self.state.phase_a_directory:
                 self.state.phase_a_directory = str(selected.parent)
             self.auto_save()
@@ -713,6 +477,24 @@ class AuAgTeReportAutomationApp(QMainWindow):
             setattr(self.state, field_name, str(selected))
             if field_name in {"master_file_5", "final_file_6"}:
                 self.state.phase_b_directory = str(selected.parent)
+            self.auto_save()
+
+    def select_existing_prep_outputs(self) -> None:
+        sem_file = self.choose_excel("Select SEM-pos-um.xlsx", self.state.phase_a_directory)
+        if not sem_file:
+            return
+        csv_file, _ = QFileDialog.getOpenFileName(self, "Select Micro-After-Correction.csv", str(sem_file.parent), "CSV files (*.csv)")
+        if not csv_file:
+            return
+        self.state.sem_positions_file = str(sem_file)
+        self.state.correction_csv = csv_file
+        self.state.phase_a_directory = str(sem_file.parent)
+        self.auto_save()
+
+    def select_phase_b_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Select Phase B parent directory", self.state.phase_b_directory or str(Path.home()))
+        if selected:
+            self.state.phase_b_directory = selected
             self.auto_save()
 
     def choose_excel(self, title: str, start: str = "") -> Path | None:
@@ -733,10 +515,10 @@ class AuAgTeReportAutomationApp(QMainWindow):
         return chosen
 
     def run_categorization(self) -> None:
-        input_path = self._require_input("excel_file_2", "Select Full Analysis XLSX File")
+        input_path = self._require_input("excel_file_2", "Select File 2")
         script_data = self.category_combo.currentData()
         if not input_path or not script_data:
-            QMessageBox.warning(self, "Missing input", "Select the Full Analysis XLSX file and a categorization script first.")
+            QMessageBox.warning(self, "Missing input", "Select File 2 and a categorization script first.")
             return
         script = Path(script_data)
         self.state.category_script = str(script)
@@ -744,13 +526,13 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self._run_script("categorization", script, input_path, None, output)
 
     def run_duplicates(self) -> None:
-        input_path = self._require_input("categorized_file_3", "Select Categorization File")
+        input_path = self._require_input("categorized_file_3", "Select categorized File 3")
         if input_path:
             output = input_path.with_name(f"{input_path.stem}_DUPS_ONLY.xlsx")
             self._run_script("duplicates", DUPLICATE_SCRIPT, input_path, None, output)
 
     def run_microscope_prep(self) -> None:
-        input_path = self._require_input("categorized_file_3", "Select Manually Reviewed Categorization File")
+        input_path = self._require_input("categorized_file_3", "Select manually reviewed File 3")
         if not input_path:
             return
         outputs = [input_path.parent / "SEM-pos-um.xlsx", input_path.parent / "Micro-After-Correction.csv"]
@@ -763,99 +545,15 @@ class AuAgTeReportAutomationApp(QMainWindow):
         if not selected:
             return
         self.state.phase_b_directory = selected
-        self.state.phase_b_crop_value = float(self.phase_b_crop_spin.value())
         self.auto_save()
-        self._run_script(
-            "crop",
-            CROP_SCRIPT,
-            None,
-            Path(selected),
-            None,
-            crop_value=self.state.phase_b_crop_value,
-        )
-
-    def run_appendix_cropper(self) -> None:
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "Select appendix parent directory",
-            self.state.phase_c_appendix_directory or str(Path.home()),
-        )
-        if not selected:
-            return
-        self.state.phase_c_appendix_directory = selected
-        self.state.phase_c_crop_value = float(self.phase_c_crop_spin.value())
-        self.state.appendix_file = ""
-        self.auto_save()
-        self._run_script(
-            "appendix_crop",
-            CROP_SCRIPT,
-            None,
-            Path(selected),
-            None,
-            crop_value=self.state.phase_c_crop_value,
-        )
-
-    def run_appendix_script(self) -> None:
-        if not self.state.phase_c_appendix_directory:
-            QMessageBox.warning(
-                self,
-                "Appendix images not selected",
-                "Run the Phase C crop step or select its parent directory first.",
-            )
-            return
-        self._run_script("appendix", APPENDIX_SCRIPT, None, None, None)
-
-    def run_ternary_script(self) -> None:
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "Select directory containing ternary-plot CSV files",
-            self.state.ternary_directory or str(Path.home()),
-        )
-        if not selected:
-            return
-        directory = Path(selected)
-        self.state.ternary_directory = selected
-        self.state.ternary_html = ""
-        self.auto_save()
-        expected_output = directory / "Combined (Ternary Plot).html"
-        self._run_script(
-            "ternary",
-            TERNARY_SCRIPT,
-            None,
-            directory,
-            expected_output,
-            suppress_messageboxes=True,
-        )
+        self._run_script("crop", CROP_SCRIPT, None, Path(selected), None)
 
     def _find_phase_b_file_3(self) -> Path | None:
         known = Path(self.state.categorized_file_3) if path_exists(self.state.categorized_file_3) else None
         phase_b = Path(self.state.phase_b_directory) if self.state.phase_b_directory else None
         if known and phase_b and known.parent == phase_b:
             return known
-        if known and phase_b and phase_b.is_dir():
-            transferred_copy = phase_b / known.name
-            if transferred_copy.exists():
-                self.state.categorized_file_3 = str(transferred_copy)
-                self.append_log(f"Auto-detected Categorization File: {transferred_copy}")
-                self.auto_save()
-                return transferred_copy
-        if phase_b and phase_b.is_dir():
-            candidates = [
-                path
-                for path in phase_b.glob("*.xlsx")
-                if path.is_file()
-                and ("classif" in path.name.casefold() or "categor" in path.name.casefold())
-                and "dups_only" not in path.name.casefold()
-                and not path.name.casefold().startswith("master_")
-                and "with_quick_links" not in path.name.casefold()
-            ]
-            if candidates:
-                detected = max(candidates, key=lambda path: path.stat().st_mtime)
-                self.state.categorized_file_3 = str(detected)
-                self.append_log(f"Auto-detected Categorization File: {detected}")
-                self.auto_save()
-                return detected
-        chosen = self.choose_excel("Select the Categorization File transferred to Phase B", self.state.phase_b_directory)
+        chosen = self.choose_excel("Select the categorized File 3 transferred to Phase B", self.state.phase_b_directory)
         if chosen:
             self.state.categorized_file_3 = str(chosen)
             self.state.phase_b_directory = str(chosen.parent)
@@ -868,7 +566,7 @@ class AuAgTeReportAutomationApp(QMainWindow):
             return
         correction = input_path.parent / "Micro-After-Correction.csv"
         if not correction.exists():
-            QMessageBox.warning(self, "Missing correction file", f"Micro-After-Correction.csv was not found beside the Categorization File:\n{input_path.parent}")
+            QMessageBox.warning(self, "Missing correction file", f"Micro-After-Correction.csv was not found beside File 3:\n{input_path.parent}")
             return
         output = input_path.with_name(f"MASTER_{input_path.stem}.xlsx")
         if output.exists() and not self.confirm_replace([output, input_path.parent / "master_debug_log.txt"]):
@@ -876,7 +574,7 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self._run_script("master", MASTER_SCRIPT, input_path, None, output)
 
     def run_final(self) -> None:
-        input_path = self._require_input("master_file_5", "Select Master Workbook", "b")
+        input_path = self._require_input("master_file_5", "Select master File 5", "b")
         if not input_path:
             return
         output = input_path.with_name(f"{input_path.stem}_with_quick_links{input_path.suffix}")
@@ -891,16 +589,7 @@ class AuAgTeReportAutomationApp(QMainWindow):
         answer = QMessageBox.question(self, "Existing output", "The following output already exists and may be replaced:\n\n" + "\n".join(existing) + "\n\nContinue?")
         return answer == QMessageBox.Yes
 
-    def _run_script(
-        self,
-        step: str,
-        script: Path,
-        input_path: Path | None,
-        directory: Path | None,
-        expected_output: Path | None,
-        crop_value: float | None = None,
-        suppress_messageboxes: bool = False,
-    ) -> None:
+    def _run_script(self, step: str, script: Path, input_path: Path | None, directory: Path | None, expected_output: Path | None) -> None:
         if self.process is not None:
             QMessageBox.warning(self, "Process running", "Wait for the current script to finish.")
             return
@@ -912,19 +601,8 @@ class AuAgTeReportAutomationApp(QMainWindow):
             arguments += ["--input", str(input_path)]
         if directory:
             arguments += ["--directory", str(directory)]
-        if crop_value is not None:
-            if not 0.1 <= crop_value <= 1.0:
-                QMessageBox.critical(self, "Invalid crop fraction", "Crop fraction must be between 0.1 and 1.0.")
-                return
-            arguments += ["--crop-value", f"{crop_value:.1f}"]
-        if suppress_messageboxes:
-            arguments.append("--suppress-messageboxes")
         self.pending_step = step
         self.pending_output = expected_output
-        self.pending_input_path = input_path
-        self.pending_directory = directory
-        self.pending_selected_directories = []
-        self.pending_started_at = time.time()
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.readyReadStandardOutput.connect(self._read_process_output)
@@ -937,11 +615,6 @@ class AuAgTeReportAutomationApp(QMainWindow):
             text = bytes(self.process.readAllStandardOutput()).decode(errors="replace").rstrip()
             if text:
                 for line in text.splitlines():
-                    if line.startswith(PICKED_DIRECTORY_MARKER):
-                        selected_directory = line[len(PICKED_DIRECTORY_MARKER):].strip()
-                        if selected_directory:
-                            self.pending_selected_directories.append(Path(selected_directory))
-                        continue
                     self.append_log(line)
 
     def _process_finished(self, exit_code: int, _exit_status) -> None:
@@ -949,43 +622,18 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self._read_process_output()
         self.append_log(f"Step {step} finished with exit code {exit_code}")
         if exit_code == 0:
-            if step == "categorization":
-                categorization_output = output if output and output.exists() else self._find_recent_output(
-                    "*.xlsx",
-                    [self.pending_input_path.parent] if self.pending_input_path else [],
-                    excluded_paths=[self.pending_input_path] if self.pending_input_path else [],
-                )
-                if categorization_output:
-                    self.state.categorized_file_3 = str(categorization_output)
-                    self.append_log(f"Recorded Categorization File: {categorization_output}")
+            if step == "categorization" and output and output.exists():
+                self.state.categorized_file_3 = str(output)
             elif step == "duplicates" and output and output.exists():
                 self.state.duplicates_file_4 = str(output)
             elif step == "microscope_prep" and output:
                 self.state.sem_positions_file = str(output)
                 self.state.correction_csv = str(output.parent / "Micro-After-Correction.csv")
-            elif step == "master":
-                master_output = output if output and output.exists() else self._find_recent_output(
-                    "*.xlsx",
-                    [self.pending_input_path.parent] if self.pending_input_path else [],
-                    excluded_paths=[self.pending_input_path] if self.pending_input_path else [],
-                )
-                if master_output:
-                    self.state.master_file_5 = str(master_output)
-                    self.state.phase_b_directory = str(master_output.parent)
-                    self.append_log(f"Recorded Master Workbook: {master_output}")
+            elif step == "master" and output and output.exists():
+                self.state.master_file_5 = str(output)
+                self.state.phase_b_directory = str(output.parent)
             elif step == "final" and output and output.exists():
                 self.state.final_file_6 = str(output)
-            elif step == "appendix":
-                appendix_output = self._find_recent_output("*.docx", self.pending_selected_directories)
-                if appendix_output:
-                    self.state.appendix_file = str(appendix_output)
-            elif step == "ternary":
-                ternary_output = output if output and output.exists() else self._find_recent_output(
-                    "*.html",
-                    [Path(self.state.ternary_directory)] if self.state.ternary_directory else [],
-                )
-                if ternary_output:
-                    self.state.ternary_html = str(ternary_output)
             self.auto_save()
         else:
             QMessageBox.critical(self, "Script failed", f"The {step} step exited with code {exit_code}. Review the activity log.")
@@ -993,58 +641,17 @@ class AuAgTeReportAutomationApp(QMainWindow):
         self.process = None
         self.pending_step = ""
         self.pending_output = None
-        self.pending_input_path = None
-        self.pending_directory = None
-        self.pending_selected_directories = []
         self.refresh_all()
 
-    def _find_recent_output(
-        self,
-        pattern: str,
-        directories: list[Path],
-        excluded_paths: list[Path | None] | None = None,
-    ) -> Path | None:
-        excluded = {
-            path.resolve()
-            for path in (excluded_paths or [])
-            if path is not None
-        }
-        candidates = []
-        for directory in reversed(directories):
-            if not directory.exists():
-                continue
-            try:
-                candidates.extend(
-                    path
-                    for path in directory.glob(pattern)
-                    if path.is_file() and path.resolve() not in excluded
-                )
-            except OSError:
-                continue
-        if not candidates:
-            return None
-        recent_candidates = [
-            path
-            for path in candidates
-            if path.stat().st_mtime >= self.pending_started_at - 2
-        ]
-        return max(recent_candidates or candidates, key=lambda path: path.stat().st_mtime)
+    def open_selected_category_script(self) -> None:
+        value = self.category_combo.currentData()
+        if value:
+            self.open_path(Path(value))
 
-    def open_coordinate_files(self) -> None:
-        """Open both outputs produced by the SEM-to-uScope preparation step."""
-        opened = False
-        missing = []
-        for value in (self.state.sem_positions_file, self.state.correction_csv):
-            if value and Path(value).exists():
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(value).resolve())))
-                opened = True
-            else:
-                missing.append(value or "Output path not recorded")
-        if missing:
-            message = "The following coordinate output(s) could not be found:\n\n" + "\n".join(missing)
-            QMessageBox.warning(self, "Coordinate files unavailable", message)
-        elif opened:
-            self.append_log("Opened SEM positions workbook and correction CSV.")
+    def open_master_log(self) -> None:
+        directory = Path(self.state.phase_b_directory) if self.state.phase_b_directory else None
+        if directory:
+            self.open_path(directory / "master_debug_log.txt")
 
     def open_state_path(self, field_name: str) -> None:
         value = getattr(self.state, field_name)
@@ -1070,29 +677,23 @@ class AuAgTeReportAutomationApp(QMainWindow):
             return Path(self.state.phase_a_directory) / PROJECT_FILE_NAME
         if self.state.phase_b_directory:
             return Path(self.state.phase_b_directory) / PROJECT_FILE_NAME
-        if self.state.phase_c_appendix_directory:
-            return Path(self.state.phase_c_appendix_directory) / PROJECT_FILE_NAME
-        if self.state.ternary_directory:
-            return Path(self.state.ternary_directory) / PROJECT_FILE_NAME
         return None
 
     def save_project(self) -> None:
         default = self._project_path() or (Path.home() / PROJECT_FILE_NAME)
-        selected, _ = QFileDialog.getSaveFileName(self, "Save workflow project", str(default), "Au/Ag-Te project (*.json)")
+        selected, _ = QFileDialog.getSaveFileName(self, "Save workflow project", str(default), "Au-Ag-Te project (*.json)")
         if selected:
             self._write_state(Path(selected))
             self.settings.setValue("last_project", selected)
             self.append_log(f"Saved project state: {selected}")
 
     def open_project(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(self, "Open workflow project", str(Path.home()), "Au/Ag-Te project (*.json)")
+        selected, _ = QFileDialog.getOpenFileName(self, "Open workflow project", str(Path.home()), "Au-Ag-Te project (*.json)")
         if selected:
             self._read_state(Path(selected))
 
     def _write_state(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.state.phase_b_crop_value = float(self.phase_b_crop_spin.value())
-        self.state.phase_c_crop_value = float(self.phase_c_crop_spin.value())
         self.state.updated_at = datetime.now().isoformat(timespec="seconds")
         path.write_text(json.dumps(asdict(self.state), indent=2), encoding="utf-8")
 
