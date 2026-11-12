@@ -9,6 +9,7 @@ Workbook/area-cutoff behavior follows Updated-AllAgMinerals-41-19.py (419 lines)
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
+from typing import Optional
 import re
 import tkinter as tk
 from tkinter import filedialog, simpledialog
@@ -174,7 +175,7 @@ def matches(rule, values):
 
 @dataclass(frozen=True)
 class Classification:
-    category: str | None
+    category: Optional[str]
     status: str
     candidates: tuple = ()
     note: str = ""
