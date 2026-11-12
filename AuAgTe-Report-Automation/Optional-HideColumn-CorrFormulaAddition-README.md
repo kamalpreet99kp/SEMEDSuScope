@@ -1,8 +1,8 @@
 # Optional Phase A finish — standalone testing version
 
 Run `Optional-HideColumn-CorrFormulaAddition.py` in PyCharm or Python, select the
-A2 categorized `.xlsx`/`.xlsm` workbook, then choose which columns to show.
-All columns are selected initially; unselected columns are hidden, not deleted.
+A2 categorized `.xlsx`/`.xlsm` workbook, choose the category sheets to process,
+then choose which columns to show. All columns are selected initially; unselected columns are hidden, not deleted.
 Canceling the visibility dialog shows all columns. No app integration yet.
 
 ## Terminal progress
@@ -20,6 +20,31 @@ transient to the withdrawn Tk root, which could keep the dialog invisible. The
 terminal explicitly says when user selection is required. Completion also
 reports that it is waiting for the final message-box acknowledgement.
 
+## Category selection and pastel colors
+
+A category-sheet GUI opens before worksheet edits. All feature category sheets
+are preselected; Raw Data is also available but is not preselected. Select All,
+Select None and Ctrl/Shift multiselection are supported. Confirm at least one
+sheet, or Cancel to abort without creating an output. The terminal reports the
+selection and any waiting for user input.
+
+Only selected sheets receive appended/reused correction columns, formulas,
+column hiding, freeze panes and softer colors. Unselected data sheets keep their
+original data, formulas, colors and column visibility. Unselected sheets need
+physical area for Summary but do not need breadth/length for formula addition.
+Summary is still rebuilt from all eligible categories, irrespective of which
+sheets were selected for the optional finish; the existing exclusions still apply.
+
+The original A2 element/feature highlight palette is mapped to light pastel
+fills. New correction headers, Summary headers and the Total row also use pale
+fills with dark text. The mapping changes fills only and does not repeatedly
+fade colors on reruns. The input file remains untouched.
+
+Programmatic `build_optional_workbook` callers can pass `selected_sheets` or a
+`sheet_picker` callback. Omitting both retains the earlier process-all behavior;
+the standalone GUI always asks. Cancel from `sheet_picker` returns None without
+saving; standalone main exits quietly in that case.
+
 ## A2 compatibility
 
 The script recognizes the actual AZtec headers retained by A2:
@@ -27,10 +52,10 @@ The script recognizes the actual AZtec headers retained by A2:
 ASCII `um` headers and the B2-style second duplicate `Area` column. It does not
 require Micro X, Image, microscope folders, or a B2 master workbook.
 
-It processes mineral/feature tables, including Raw Data, Cinnabar,
-Cinnabar-Asso and After Size-CutOff. Area, Summary, Integrity Check and
+Selectable mineral/feature tables include Raw Data, Cinnabar,
+Cinnabar-Asso and After Size-CutOff; only the selected sheets are processed. Area, Summary, Integrity Check and
 Check Report are administrative sheets; they do not get correction columns.
-Other non-feature sheets are preserved. All target tables are validated before
+Other non-feature sheets are preserved. All selected target tables and Summary area sources are validated before
 changes are made. Ambiguous/missing physical area or geometry columns produce
 a sheet-specific error instead of a misleading partial result.
 
@@ -65,8 +90,8 @@ and Percentage. Each nonempty mineral sheet appears in workbook order except:
 - Cinnabar-Asso
 
 Raw Data and administrative sheets are not categories and are also omitted.
-Those three excluded category sheets are retained and still receive the new
-columns. Their areas are excluded from both Summary totals and the percentage
+Those three excluded category sheets are retained and receive the new
+columns only when selected. Their areas are excluded from both Summary totals and the percentage
 denominator.
 
 Area totals are SUM formulas referencing the original unit-bearing physical
@@ -96,3 +121,10 @@ are logged, heartbeats appear during blocked operations, and a mocked hidden
 root is not used as the visibility window's transient master. The latter tests
 window setup without claiming validation of Windows foreground-focus behavior.
 
+
+Category-selection regressions additionally verify that only chosen sheets
+change; unselected colors/visibility/formulas are preserved; Summary includes
+unselected eligible categories; cancel/invalid selections do not save; default
+GUI choices exclude Raw Data; unselected sheets do not require geometry; and
+pastel colors are stable on rerun. All 18 tests passed, including actual
+spreadsheet recalculation after processing a selected subset.

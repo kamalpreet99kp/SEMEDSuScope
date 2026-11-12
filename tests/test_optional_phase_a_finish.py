@@ -93,7 +93,7 @@ class OptionalFinishTests(unittest.TestCase):
             self.assertIsNone(gu["O2"].value)
             self.assertEqual(gu["L2"].value, '=IF(OR(K2="",K2=0),F2,SQRT(J2*K2/100))')
             self.assertEqual(gu["M2"].value, '=IF(OR(K2="",K2=0),G2,SQRT(J2*K2/100))')
-            self.assertEqual(gu["A2"].fill.fgColor.rgb[-6:], "FFFF00")
+            self.assertEqual(gu["A2"].fill.fgColor.rgb[-6:], "FFF8D6")
             summary = book["Summary"]
             self.assertEqual([summary.cell(r, 1).value for r in range(2, 5)],
                              ["Gudmundite", "Aurostibite", "Total"])
@@ -230,11 +230,109 @@ class OptionalFinishTests(unittest.TestCase):
     def test_main_standalone_flow(self):
         with patch.object(optional.tk, "Tk"), \
              patch.object(optional.filedialog, "askopenfilename", return_value=str(self.source)), \
+             patch.object(optional, "choose_category_sheets", return_value={"Gudmundite", "Aurostibite"}) as sheets, \
              patch.object(optional, "choose_visible_columns", return_value=None), \
              patch.object(optional.messagebox, "showinfo") as success:
             optional.main()
         self.assertTrue(success.called)
+        self.assertTrue(sheets.called)
         self.assertTrue((self.root / "ClassifiedSample_optional_final.xlsx").exists())
+
+    def test_only_selected_sheets_change_and_summary_still_includes_all_categories(self):
+        book = load_workbook(self.source)
+        book["Aurostibite"].column_dimensions["B"].hidden = True
+        book.save(self.source)
+        book.close()
+        digest = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        visible = {("feature", 1), ("newbrea", 1)}
+        output = optional.build_optional_workbook(self.source, selected_sheets={"Gudmundite"},
+                                                   visible_columns=visible)
+        book = load_workbook(output)
+        try:
+            self.assertEqual(book["Gudmundite"].max_column, 15)
+            self.assertTrue(book["Gudmundite"].column_dimensions["E"].hidden)
+            self.assertFalse(book["Gudmundite"].column_dimensions["L"].hidden)
+            self.assertEqual(book["Gudmundite"]["A2"].fill.fgColor.rgb[-6:], "FFF8D6")
+            for name in ("Aurostibite", "Cinnabar", "Cinnabar-Asso", "After Size-CutOff", "Raw Data"):
+                self.assertEqual(book[name].max_column, 8)
+                self.assertEqual(book[name]["A2"].fill.fgColor.rgb[-6:], "FFFF00")
+                self.assertIsNone(book[name].freeze_panes)
+            self.assertTrue(book["Aurostibite"].column_dimensions["B"].hidden)
+            self.assertEqual(book["Summary"]["A2"].value, "Gudmundite")
+            self.assertEqual(book["Summary"]["A3"].value, "Aurostibite")
+            self.assertEqual(book["Summary"]["B3"].value, "=SUM('Aurostibite'!$E$2:$E$2)")
+        finally:
+            book.close()
+        self.assertEqual(hashlib.sha256(self.source.read_bytes()).hexdigest(), digest)
+
+    def test_sheet_selection_cancel_does_not_modify_or_save(self):
+        digest = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        picker = MagicMock(return_value=None)
+        with patch.object(optional, "add_correction_columns") as edits:
+            output = optional.build_optional_workbook(self.source, sheet_picker=picker)
+        self.assertIsNone(output)
+        self.assertIn("Gudmundite", picker.call_args[0][0])
+        self.assertIn("Raw Data", picker.call_args[0][0])
+        self.assertNotIn("Summary", picker.call_args[0][0])
+        edits.assert_not_called()
+        self.assertEqual(list(self.root.glob('*optional_final*')), [])
+        self.assertEqual(hashlib.sha256(self.source.read_bytes()).hexdigest(), digest)
+        for selected in (set(), {"Not a category"}):
+            with self.assertRaisesRegex(ValueError, "valid feature-data sheet"):
+                optional.build_optional_workbook(self.source, selected_sheets=selected)
+
+    def test_unselected_sheet_does_not_require_geometry_for_formula_addition(self):
+        book = load_workbook(self.source)
+        book["Gudmundite"]["F1"] = "Unrecognized breadth"
+        book.save(self.source)
+        book.close()
+        output = optional.build_optional_workbook(self.source, selected_sheets={"Aurostibite"})
+        book = load_workbook(output)
+        try:
+            self.assertEqual(book["Gudmundite"].max_column, 8)
+            self.assertEqual(book["Gudmundite"]["F1"].value, "Unrecognized breadth")
+            self.assertEqual(book["Aurostibite"].max_column, 15)
+            self.assertEqual(book["Summary"]["A2"].value, "Gudmundite")
+        finally:
+            book.close()
+
+    def test_pastel_highlights_are_stable_on_rerun(self):
+        book = load_workbook(self.source)
+        book["Gudmundite"]["H2"].fill = PatternFill(fill_type="solid", fgColor="F44336")
+        book.save(self.source)
+        book.close()
+        first = optional.build_optional_workbook(self.source, selected_sheets={"Gudmundite"})
+        second = optional.build_optional_workbook(first, selected_sheets={"Gudmundite"})
+        for output in (first, second):
+            book = load_workbook(output)
+            try:
+                self.assertEqual(book["Gudmundite"]["H2"].fill.fgColor.rgb[-6:], "FBE4E2")
+                self.assertEqual(book["Gudmundite"]["I1"].fill.fgColor.rgb[-6:], "EFF4FA")
+                self.assertEqual(book["Summary"]["A1"].fill.fgColor.rgb[-6:], "E7EEF6")
+            finally:
+                book.close()
+
+    def test_category_gui_defaults_and_selected_names(self):
+        root = MagicMock()
+        root.winfo_viewable.return_value = False
+        window, box = MagicMock(), MagicMock()
+        box.curselection.return_value = (1, 3)
+        commands = {}
+
+        def button(*args, **kwargs):
+            commands[kwargs["text"]] = kwargs["command"]
+            return MagicMock()
+
+        root.wait_window.side_effect = lambda dialog: commands["OK"]()
+        with patch.object(optional.tk, "Toplevel", return_value=window), \
+             patch.object(optional.tk, "Label"), patch.object(optional.tk, "Frame"), \
+             patch.object(optional.tk, "Scrollbar"), patch.object(optional.tk, "Listbox", return_value=box), \
+             patch.object(optional.tk, "Button", side_effect=button):
+            selected = optional.choose_category_sheets(root, ["Raw Data", "Gudmundite", "Aurostibite", "Cinnabar"])
+        self.assertEqual(selected, {"Gudmundite", "Cinnabar"})
+        self.assertEqual([call.args[0] for call in box.selection_set.call_args_list], [1, 2, 3])
+        window.transient.assert_not_called()
+        window.lift.assert_called_once()
 
     def test_progress_is_logged_before_loading_and_waiting_for_selection(self):
         stream = io.StringIO()
@@ -318,7 +416,7 @@ class OptionalFinishTests(unittest.TestCase):
         book["Aurostibite"].title = "O'Brien"
         book.save(self.source)
         book.close()
-        output = optional.build_optional_workbook(self.source)
+        output = optional.build_optional_workbook(self.source, selected_sheets={"Gudmundite", "O'Brien"})
         book = load_workbook(output)
         book["Gudmundite"]["K3"] = 25  # sqrt(36 * 25 / 100) = 3.
         book["O'Brien"]["K2"] = 0  # Zero keeps original breadth/length.

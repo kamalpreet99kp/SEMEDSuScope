@@ -28,6 +28,15 @@ NEW_HEADERS = ("Open Image", "Area Orig", "Corr %", "New Brea", "New Len", "Asso
 ADMIN_SHEETS = {"area", "summary", "integritycheck", "checkreport"}
 NOT_SUMMARY_CATEGORIES = {"aftersizecutoff", "cinnabar", "cinnabarasso"}
 HEARTBEAT_SECONDS = 10
+PASTEL_REPLACEMENTS = {
+    "00BFCF": "DDF4F6", "FFEB3B": "FFF8D6", "FFFF00": "FFF8D6",
+    "FFA07A": "FBE9E2", "ADD8E6": "E8F4F8", "90EE90": "E6F6E6",
+    "D87093": "F6E4EB", "F44336": "FBE4E2", "A9A9A9": "ECECEC",
+    "9370DB": "EEE8F8", "FFA09A": "FBE9E7", "D87099": "F6E4EC",
+    "FFF2CC": "FFF9E8", "E2EFDA": "F0F7ED", "F4B183": "FAEADD",
+    "D9E1F2": "EEF2F9", "DDEBF7": "F0F6FB", "F8CBAD": "FCF0E8",
+    "E4DFEC": "F4F1F8",
+}
 
 
 def log(message):
@@ -102,8 +111,14 @@ class FeatureTable:
     block_exists: bool
 
 
-def inspect_tables(book):
-    """Validate every feature table before making any output changes."""
+def feature_sheet_names(book):
+    """Discover selectable feature sheets without requiring their geometry yet."""
+    return [ws.title for ws in book if normalize(ws.title) not in ADMIN_SHEETS
+            and any(normalize(cell.value) == "feature" for cell in ws[1])]
+
+
+def inspect_tables(book, selected_sheets=None):
+    """Validate selected edit targets and physical area sources for Summary."""
     tables = []
     for index, ws in enumerate(book, 1):
         log(f"Validating sheet {index}/{len(book.worksheets)}: {ws.title}")
@@ -115,13 +130,16 @@ def inspect_tables(book):
             log("  No Feature header; sheet preserved without changes.")
             continue
         feature = find_column(headers, {"feature"}, "Feature", ws.title)
-        area = physical_area_column(headers, ws.title)
-        breadth = find_column(headers, {"breadthum", "breadth"}, "Breadth (µm)", ws.title)
-        length = find_column(headers, {"lengthum", "length"}, "Length (µm)", ws.title)
+        selected = selected_sheets is None or ws.title in selected_sheets
+        summary_category = (normalize(ws.title) != "rawdata"
+                            and normalize(ws.title) not in NOT_SUMMARY_CATEGORIES)
+        area = physical_area_column(headers, ws.title) if selected or summary_category else 0
+        breadth = find_column(headers, {"breadthum", "breadth"}, "Breadth (µm)", ws.title) if selected else 0
+        length = find_column(headers, {"lengthum", "length"}, "Length (µm)", ws.title) if selected else 0
         exists = (len(headers) >= len(NEW_HEADERS)
                   and tuple(normalize(h) for h in headers[-len(NEW_HEADERS):])
                   == tuple(normalize(h) for h in NEW_HEADERS))
-        if not exists and any(normalize(h) in {normalize(n) for n in NEW_HEADERS[:-1]} for h in headers):
+        if selected and not exists and any(normalize(h) in {normalize(n) for n in NEW_HEADERS[:-1]} for h in headers):
             raise ValueError(f"{ws.title}: contains a partial or displaced correction block. "
                              "Select the original A2 workbook or an output made by this script.")
         start = len(headers) - len(NEW_HEADERS) + 1 if exists else len(headers) + 1
@@ -133,8 +151,11 @@ def inspect_tables(book):
             if (row - 1) % 10000 == 0:
                 log(f"  {ws.title}: scanned {row - 1:,}/{ws.max_row - 1:,} rows")
         rows = tuple(rows)
-        log(f"  {len(rows):,} feature rows; physical area column {get_column_letter(area)}; "
-            f"{'reusing' if exists else 'adding'} correction columns.")
+        if selected:
+            log(f"  {len(rows):,} feature rows; physical area column {get_column_letter(area)}; "
+                f"{'reusing' if exists else 'adding'} correction columns.")
+        else:
+            log(f"  {len(rows):,} feature rows; not selected, data/formatting/visibility preserved.")
         tables.append(FeatureTable(ws.title, feature, area, breadth, length, rows, start, exists))
     if not tables:
         raise ValueError("No A2 feature-data sheets found. Select the categorized workbook.")
@@ -144,7 +165,7 @@ def inspect_tables(book):
 def add_correction_columns(ws, table):
     start = table.block_start
     columns = {name: start + offset for offset, name in enumerate(NEW_HEADERS)}
-    fill = PatternFill(fill_type="solid", fgColor="D9E5F2")
+    fill = PatternFill(fill_type="solid", fgColor="EFF4FA")
     for header, col in columns.items():
         cell = ws.cell(1, col, header)
         cell.font = Font(name="Calibri", bold=True, color="20364D")
@@ -188,6 +209,25 @@ def add_correction_columns(ws, table):
     ws.freeze_panes = "A2"
 
 
+def soften_column_colors(ws, table):
+    """Map the A2 highlight palette to stable pastel colors on selected sheets.
+
+    Only fills change: values, formulas, fonts and borders are preserved. The
+    replacement colors are not themselves keys, so reruns do not fade further.
+    """
+    fills = {old: PatternFill(fill_type="solid", fgColor=new)
+             for old, new in PASTEL_REPLACEMENTS.items()}
+    for completed, row in enumerate((1,) + table.rows, 1):
+        for col in range(1, table.block_start):
+            cell = ws.cell(row, col)
+            if cell.fill.patternType == "solid" and cell.fill.fgColor.type == "rgb":
+                replacement = fills.get(cell.fill.fgColor.rgb[-6:].upper())
+                if replacement is not None:
+                    cell.fill = replacement
+        if completed % 1000 == 0:
+            log(f"  {ws.title}: pastel colors {completed:,}/{len(table.rows) + 1:,} rows")
+
+
 def header_keys(ws):
     """Distinguish repeated headers so hiding the first Area does not hide both."""
     seen = {}
@@ -208,6 +248,68 @@ def visibility_choices(book, tables):
             if key not in choices:
                 choices[key] = label if key[1] == 1 else f"{label} [occurrence {key[1]}]"
     return list(choices.items())
+
+
+def present_selection_window(root, window):
+    """Keep both selectors visible even though standalone main hides its root."""
+    if root.winfo_viewable():
+        window.transient(root)
+    window.deiconify()
+    window.update_idletasks()
+    window.lift()
+    window.attributes("-topmost", True)
+    window.focus_force()
+
+    def release_topmost():
+        if window.winfo_exists():
+            window.attributes("-topmost", False)
+
+    root.after(500, release_topmost)
+    window.grab_set()
+
+
+def choose_category_sheets(root, sheet_names):
+    """Choose which data sheets receive edits; cancel aborts without saving."""
+    window = tk.Toplevel(root)
+    window.title("Choose category sheets to process")
+    window.geometry("800x620")
+    tk.Label(window, text="Select sheets for correction columns, formulas, pastel colors and hiding.\n"
+             "Unselected sheets stay unchanged. Summary still includes all eligible categories.\n"
+             "Category sheets are selected by default; Raw Data is optional and not preselected.",
+             justify="left", anchor="w").pack(fill="x", padx=10, pady=10)
+    frame = tk.Frame(window)
+    frame.pack(fill="both", expand=True, padx=10, pady=5)
+    scrollbar = tk.Scrollbar(frame)
+    scrollbar.pack(side="right", fill="y")
+    box = tk.Listbox(frame, selectmode="extended", exportselection=False,
+                     yscrollcommand=scrollbar.set)
+    box.pack(side="left", fill="both", expand=True)
+    scrollbar.configure(command=box.yview)
+    for i, name in enumerate(sheet_names):
+        box.insert("end", name + (" (reference data; optional)" if normalize(name) == "rawdata" else ""))
+        if normalize(name) != "rawdata":
+            box.selection_set(i)
+    result = {"selected": None}
+
+    def confirm():
+        indices = box.curselection()
+        if not indices:
+            messagebox.showwarning("No sheets selected", "Select at least one sheet, or Cancel.", parent=window)
+            return
+        result["selected"] = {sheet_names[i] for i in indices}
+        window.destroy()
+
+    buttons = tk.Frame(window)
+    buttons.pack(fill="x", padx=10, pady=10)
+    tk.Button(buttons, text="Select All", command=lambda: box.selection_set(0, "end")).pack(side="left")
+    tk.Button(buttons, text="Select None", command=lambda: box.selection_clear(0, "end")).pack(side="left", padx=5)
+    tk.Button(buttons, text="OK", command=confirm).pack(side="right")
+    tk.Button(buttons, text="Cancel", command=window.destroy).pack(side="right", padx=5)
+    window.protocol("WM_DELETE_WINDOW", window.destroy)
+    present_selection_window(root, window)
+    log("Category-sheet window is open. Waiting for OK or Cancel.")
+    root.wait_window(window)
+    return result["selected"]
 
 
 def choose_visible_columns(root, choices):
@@ -242,23 +344,8 @@ def choose_visible_columns(root, choices):
     tk.Button(buttons, text="OK", command=confirm).pack(side="right")
     tk.Button(buttons, text="Cancel (show all)", command=window.destroy).pack(side="right", padx=5)
     window.protocol("WM_DELETE_WINDOW", window.destroy)
-    # A transient dialog can remain hidden when its master was withdrawn.
-    # Standalone main() deliberately withdraws the empty Tk root.
-    if root.winfo_viewable():
-        window.transient(root)
-    window.deiconify()
-    window.update_idletasks()
-    window.lift()
-    window.attributes("-topmost", True)
-    window.focus_force()
-
-    def release_topmost():
-        if window.winfo_exists():
-            window.attributes("-topmost", False)
-
-    root.after(500, release_topmost)
+    present_selection_window(root, window)
     log("Column-selection window is open. Waiting for OK or Cancel (show all).")
-    window.grab_set()
     root.wait_window(window)
     if result["visible"] is None:
         log("Column selection cancelled/closed: showing all data columns.")
@@ -327,10 +414,10 @@ def write_summary(book, tables):
             cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
             cell.alignment = Alignment(vertical="center", wrap_text=True)
     for cell in ws[1]:
-        cell.fill = PatternFill(fill_type="solid", fgColor="20364D")
-        cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        cell.fill = PatternFill(fill_type="solid", fgColor="E7EEF6")
+        cell.font = Font(name="Calibri", size=11, bold=True, color="20364D")
     for cell in ws[total_row]:
-        cell.fill = PatternFill(fill_type="solid", fgColor="D9E5F2")
+        cell.fill = PatternFill(fill_type="solid", fgColor="F2F6FA")
         cell.font = Font(name="Calibri", size=11, bold=True)
         cell.border = Border(left=thin, right=thin, top=medium, bottom=medium)
     for row in range(2, total_row + 1):
@@ -355,7 +442,8 @@ def unique_output_path(source):
     return output
 
 
-def build_optional_workbook(source, visible_columns=None, visibility_picker=None):
+def build_optional_workbook(source, visible_columns=None, visibility_picker=None,
+                            selected_sheets=None, sheet_picker=None):
     """Finish a copy; the original workbook is never saved or overwritten."""
     source = Path(source)
     if source.suffix.lower() not in (".xlsx", ".xlsm"):
@@ -365,14 +453,36 @@ def build_optional_workbook(source, visible_columns=None, visibility_picker=None
         book = load_workbook(source, keep_vba=source.suffix.lower() == ".xlsm")
     log(f"Loaded {len(book.worksheets)} sheets.")
     try:
+        available = feature_sheet_names(book)
+        if not available:
+            raise ValueError("No A2 feature-data sheets found. Select the categorized workbook.")
+        if sheet_picker:
+            log("Waiting for category-sheet selection. No data sheets have been modified yet.")
+            selected_sheets = sheet_picker(available)
+            if selected_sheets is None:
+                log("Category selection cancelled. No output created; input unchanged.")
+                return None
+            log("Category-sheet selection finished.")
+        if selected_sheets is None:
+            selected_sheets = set(available)  # Existing programmatic API: process all.
+        elif isinstance(selected_sheets, str):
+            selected_sheets = {selected_sheets}
+        else:
+            selected_sheets = set(selected_sheets)
+        if not selected_sheets or not selected_sheets.issubset(available):
+            raise ValueError("Select at least one valid feature-data sheet.")
+        log("Selected sheets: " + ", ".join(name for name in available if name in selected_sheets))
         with progress_stage("Validating sheets and measurement columns"):
-            tables = inspect_tables(book)
-        for index, table in enumerate(tables, 1):
-            with progress_stage(f"Adding correction columns: sheet {index}/{len(tables)} {table.sheet_name}"):
+            tables = inspect_tables(book, selected_sheets)
+        selected_tables = [table for table in tables if table.sheet_name in selected_sheets]
+        for index, table in enumerate(selected_tables, 1):
+            with progress_stage(f"Adding correction columns: sheet {index}/{len(selected_tables)} {table.sheet_name}"):
                 add_correction_columns(book[table.sheet_name], table)
+            with progress_stage(f"Softening column colors: {table.sheet_name}"):
+                soften_column_colors(book[table.sheet_name], table)
         if visibility_picker:
             log("Preparing column-selection options.")
-            choices = visibility_choices(book, tables)
+            choices = visibility_choices(book, selected_tables)
             log("Waiting for column selection. A window will open; check the taskbar if it is not visible.")
             visible = visibility_picker(choices)
             log("Column-selection step finished.")
@@ -380,8 +490,8 @@ def build_optional_workbook(source, visible_columns=None, visibility_picker=None
             visible = visible_columns
             log("Using supplied column visibility (None means show all).")
         with progress_stage("Applying column visibility"):
-            for index, table in enumerate(tables, 1):
-                log(f"  Visibility: sheet {index}/{len(tables)} {table.sheet_name}")
+            for index, table in enumerate(selected_tables, 1):
+                log(f"  Visibility: sheet {index}/{len(selected_tables)} {table.sheet_name}")
                 apply_visibility(book[table.sheet_name], visible)
         with progress_stage("Rebuilding Summary formulas and formatting"):
             write_summary(book, tables)
@@ -409,7 +519,10 @@ def main():
             log("No file selected. Cancelled.")
             return
         output = build_optional_workbook(
-            source, visibility_picker=lambda choices: choose_visible_columns(root, choices))
+            source, visibility_picker=lambda choices: choose_visible_columns(root, choices),
+            sheet_picker=lambda names: choose_category_sheets(root, names))
+        if output is None:
+            return
         log("Showing completion message; click OK to close.")
         messagebox.showinfo("Optional Phase A finish", f"Created:\n{output}", parent=root)
     except Exception as exc:
