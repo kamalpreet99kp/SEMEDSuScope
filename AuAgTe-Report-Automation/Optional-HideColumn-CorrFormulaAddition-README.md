@@ -5,6 +5,21 @@ A2 categorized `.xlsx`/`.xlsm` workbook, then choose which columns to show.
 All columns are selected initially; unselected columns are hidden, not deleted.
 Canceling the visibility dialog shows all columns. No app integration yet.
 
+## Terminal progress
+
+Timestamped messages are flushed immediately for PyCharm and future QProcess
+Activity logging. They report file selection, workbook loading, sheet validation,
+per-sheet correction processing, waiting for column selection, visibility,
+Summary rebuilding, saving and completion/errors. Correction processing reports
+every 1,000 feature rows; validation reports every 10,000 scanned rows. Blocking
+stages such as load/save print a heartbeat every 10 seconds with elapsed time.
+This is activity reporting, not an estimated percentage complete.
+
+The column-selection dialog is brought to the front and is not attached as a
+transient to the withdrawn Tk root, which could keep the dialog invisible. The
+terminal explicitly says when user selection is required. Completion also
+reports that it is waiting for the final message-box acknowledgement.
+
 ## A2 compatibility
 
 The script recognizes the actual AZtec headers retained by A2:
@@ -76,4 +91,8 @@ case-insensitive administrative/category names, and actual formula
 recalculation using an isolated headless LibreOffice profile. Cached numeric
 results verify original/zero/entered correction percentages, area totals,
 percentages, escaped sheet names and zero-area handling.
+Additional tests verify messages precede loading and dialog waits, load errors
+are logged, heartbeats appear during blocked operations, and a mocked hidden
+root is not used as the visibility window's transient master. The latter tests
+window setup without claiming validation of Windows foreground-focus behavior.
 

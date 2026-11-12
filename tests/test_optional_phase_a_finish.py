@@ -1,7 +1,9 @@
 """Test raw AZtec headers, duplicate Area names, formulas and workbook safety."""
 
 import ast
+from contextlib import redirect_stdout
 import hashlib
+import io
 import importlib.util
 import os
 from pathlib import Path
@@ -9,8 +11,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from threading import Event
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
@@ -232,6 +235,81 @@ class OptionalFinishTests(unittest.TestCase):
             optional.main()
         self.assertTrue(success.called)
         self.assertTrue((self.root / "ClassifiedSample_optional_final.xlsx").exists())
+
+    def test_progress_is_logged_before_loading_and_waiting_for_selection(self):
+        stream = io.StringIO()
+        actual_load = optional.load_workbook
+
+        def loader(*args, **kwargs):
+            self.assertIn("Loading workbook", stream.getvalue())
+            return actual_load(*args, **kwargs)
+
+        def picker(choices):
+            self.assertIn("Waiting for column selection", stream.getvalue())
+            self.assertIn("Loaded 11 sheets", stream.getvalue())
+            return None
+
+        with redirect_stdout(stream), patch.object(optional, "load_workbook", side_effect=loader):
+            optional.build_optional_workbook(self.source, visibility_picker=picker)
+        output = stream.getvalue()
+        expected = ["Selected A2 workbook", "Loading workbook", "Loaded 11 sheets",
+                    "Validating sheets", "Adding correction columns", "correction columns 2/2 rows",
+                    "Waiting for column selection", "Applying column visibility",
+                    "Rebuilding Summary", "Summary category: Gudmundite", "Saving workbook",
+                    "Optional Phase A output saved", "Complete. The input workbook was not changed"]
+        position = 0
+        for message in expected:
+            found = output.find(message, position)
+            self.assertGreaterEqual(found, position, message)
+            position = found + len(message)
+
+    def test_load_failure_is_logged_before_propagating(self):
+        stream = io.StringIO()
+        with redirect_stdout(stream), patch.object(optional, "load_workbook", side_effect=PermissionError("File locked")):
+            with self.assertRaisesRegex(PermissionError, "File locked"):
+                optional.build_optional_workbook(self.source)
+        self.assertIn("ERROR during Loading workbook", stream.getvalue())
+        self.assertIn("File locked", stream.getvalue())
+
+    def test_blocking_stage_produces_heartbeat(self):
+        received = Event()
+
+        class Observer(io.StringIO):
+            def write(self, text):
+                result = super().write(text)
+                if "Still working:" in text:
+                    received.set()
+                return result
+
+        stream = Observer()
+        with redirect_stdout(stream), patch.object(optional, "HEARTBEAT_SECONDS", 0.01):
+            with optional.progress_stage("Test long operation"):
+                self.assertTrue(received.wait(2), "No heartbeat arrived while the operation was blocked")
+        self.assertIn("Still working: Test long operation", stream.getvalue())
+        self.assertIn("Done: Test long operation", stream.getvalue())
+
+    def test_column_dialog_not_attached_to_hidden_root(self):
+        root = MagicMock()
+        root.winfo_viewable.return_value = False
+        window = MagicMock()
+        stream = io.StringIO()
+
+        def wait(dialog):
+            self.assertIn("Column-selection window is open", stream.getvalue())
+            dialog.destroy()
+
+        root.wait_window.side_effect = wait
+        with redirect_stdout(stream), patch.object(optional.tk, "Toplevel", return_value=window), \
+             patch.object(optional.tk, "Label"), patch.object(optional.tk, "Frame"), \
+             patch.object(optional.tk, "Scrollbar"), patch.object(optional.tk, "Listbox"), \
+             patch.object(optional.tk, "Button"):
+            result = optional.choose_visible_columns(root, [(("feature", 1), "Feature")])
+        self.assertIsNone(result)
+        window.transient.assert_not_called()
+        window.deiconify.assert_called_once()
+        window.lift.assert_called_once()
+        window.focus_force.assert_called_once()
+        window.attributes.assert_called_with("-topmost", True)
 
     @unittest.skipUnless(shutil.which('libreoffice') or shutil.which('soffice'), 'LibreOffice unavailable')
     def test_real_spreadsheet_recalculation(self):

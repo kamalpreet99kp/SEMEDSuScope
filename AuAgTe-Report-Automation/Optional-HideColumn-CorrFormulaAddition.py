@@ -6,9 +6,13 @@ and replaces Summary with formulas based on physical feature area in um2.
 """
 
 from copy import copy
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import re
+from threading import Event, Thread
+from time import monotonic
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from typing import Tuple
@@ -23,6 +27,41 @@ from openpyxl.workbook.properties import CalcProperties
 NEW_HEADERS = ("Open Image", "Area Orig", "Corr %", "New Brea", "New Len", "Asso", "Diam")
 ADMIN_SHEETS = {"area", "summary", "integritycheck", "checkreport"}
 NOT_SUMMARY_CATEGORIES = {"aftersizecutoff", "cinnabar", "cinnabarasso"}
+HEARTBEAT_SECONDS = 10
+
+
+def log(message):
+    """Flush every line for both PyCharm and a future QProcess Activity log."""
+    print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
+
+
+@contextmanager
+def progress_stage(description):
+    """Report activity even while openpyxl is blocked loading/saving a large file.
+
+    The background thread only prints. All Tk and workbook operations remain
+    on the main thread; the heartbeat is not a fabricated percentage complete.
+    """
+    log(description)
+    started = monotonic()
+    stopped = Event()
+
+    def heartbeat():
+        while not stopped.wait(HEARTBEAT_SECONDS):
+            log(f"Still working: {description} ({monotonic() - started:.0f}s elapsed)")
+
+    worker = Thread(target=heartbeat, daemon=True)
+    worker.start()
+    try:
+        yield
+    except Exception as exc:
+        log(f"ERROR during {description}: {exc}")
+        raise
+    else:
+        log(f"Done: {description} ({monotonic() - started:.1f}s)")
+    finally:
+        stopped.set()
+        worker.join(timeout=1)
 
 
 def normalize(value):
@@ -66,11 +105,14 @@ class FeatureTable:
 def inspect_tables(book):
     """Validate every feature table before making any output changes."""
     tables = []
-    for ws in book:
+    for index, ws in enumerate(book, 1):
+        log(f"Validating sheet {index}/{len(book.worksheets)}: {ws.title}")
         if normalize(ws.title) in ADMIN_SHEETS:
+            log("  Administrative sheet; data-column processing skipped.")
             continue
         headers = [cell.value for cell in ws[1]]
         if "feature" not in {normalize(h) for h in headers}:
+            log("  No Feature header; sheet preserved without changes.")
             continue
         feature = find_column(headers, {"feature"}, "Feature", ws.title)
         area = physical_area_column(headers, ws.title)
@@ -83,9 +125,16 @@ def inspect_tables(book):
             raise ValueError(f"{ws.title}: contains a partial or displaced correction block. "
                              "Select the original A2 workbook or an output made by this script.")
         start = len(headers) - len(NEW_HEADERS) + 1 if exists else len(headers) + 1
-        rows = tuple(row for row in range(2, ws.max_row + 1)
-                     if ws.cell(row, feature).value is not None
-                     and str(ws.cell(row, feature).value).strip() != "")
+        rows = []
+        for row in range(2, ws.max_row + 1):
+            value = ws.cell(row, feature).value
+            if value is not None and str(value).strip() != "":
+                rows.append(row)
+            if (row - 1) % 10000 == 0:
+                log(f"  {ws.title}: scanned {row - 1:,}/{ws.max_row - 1:,} rows")
+        rows = tuple(rows)
+        log(f"  {len(rows):,} feature rows; physical area column {get_column_letter(area)}; "
+            f"{'reusing' if exists else 'adding'} correction columns.")
         tables.append(FeatureTable(ws.title, feature, area, breadth, length, rows, start, exists))
     if not tables:
         raise ValueError("No A2 feature-data sheets found. Select the categorized workbook.")
@@ -102,7 +151,7 @@ def add_correction_columns(ws, table):
         cell.fill = fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         ws.column_dimensions[get_column_letter(col)].width = 15
-    for row in table.rows:
+    for completed, row in enumerate(table.rows, 1):
         corr = f"{get_column_letter(columns['Corr %'])}{row}"
         area = f"{get_column_letter(columns['Area Orig'])}{row}"
         breadth = f"{get_column_letter(table.breadth_col)}{row}"
@@ -124,6 +173,8 @@ def add_correction_columns(ws, table):
             cell.alignment = Alignment(horizontal="center", vertical="center")
             if header not in ("Open Image", "Asso"):
                 cell.number_format = "0.00" if header == "Corr %" else "0.000"
+        if completed % 1000 == 0 or completed == len(table.rows):
+            log(f"  {ws.title}: correction columns {completed:,}/{len(table.rows):,} rows")
     if table.rows and not table.block_exists:
         validation = DataValidation(type="decimal", operator="between", formula1=0,
                                     formula2=100, allow_blank=True)
@@ -191,9 +242,28 @@ def choose_visible_columns(root, choices):
     tk.Button(buttons, text="OK", command=confirm).pack(side="right")
     tk.Button(buttons, text="Cancel (show all)", command=window.destroy).pack(side="right", padx=5)
     window.protocol("WM_DELETE_WINDOW", window.destroy)
-    window.transient(root)
+    # A transient dialog can remain hidden when its master was withdrawn.
+    # Standalone main() deliberately withdraws the empty Tk root.
+    if root.winfo_viewable():
+        window.transient(root)
+    window.deiconify()
+    window.update_idletasks()
+    window.lift()
+    window.attributes("-topmost", True)
+    window.focus_force()
+
+    def release_topmost():
+        if window.winfo_exists():
+            window.attributes("-topmost", False)
+
+    root.after(500, release_topmost)
+    log("Column-selection window is open. Waiting for OK or Cancel (show all).")
     window.grab_set()
     root.wait_window(window)
+    if result["visible"] is None:
+        log("Column selection cancelled/closed: showing all data columns.")
+    else:
+        log(f"Column selection confirmed: {len(result['visible'])}/{len(choices)} columns selected.")
     return result["visible"]
 
 
@@ -234,6 +304,8 @@ def write_summary(book, tables):
     ws.append(("Category (Sheet name)", "Total Sum of Area (sq. µm)", "Percentage"))
     categories = [t for t in tables if t.rows and normalize(t.sheet_name) != "rawdata"
                   and normalize(t.sheet_name) not in NOT_SUMMARY_CATEGORIES]
+    log(f"Summary: including {len(categories)} nonempty category sheets; excluding Raw Data, "
+        "After Size-CutOff, Cinnabar and Cinnabar-Asso.")
     total_row = len(categories) + 2
     for row, table in enumerate(categories, 2):
         # Force literal text for unusual sheet names starting with an equals sign.
@@ -243,6 +315,7 @@ def write_summary(book, tables):
         sheet = quote_sheetname(table.sheet_name)
         ws.cell(row, 2, f"=SUM({sheet}!${col}$2:${col}${max(table.rows)})")
         ws.cell(row, 3, f"=IF($B${total_row}=0,0,B{row}/$B${total_row})")
+        log(f"  Summary category: {table.sheet_name}; SUM of {col}2:{col}{max(table.rows)}")
     ws.cell(total_row, 1, "Total")
     ws.cell(total_row, 2, f"=SUM(B2:B{total_row - 1})" if categories else "=0")
     ws.cell(total_row, 3, f"=SUM(C2:C{total_row - 1})" if categories else "=0")
@@ -287,37 +360,60 @@ def build_optional_workbook(source, visible_columns=None, visibility_picker=None
     source = Path(source)
     if source.suffix.lower() not in (".xlsx", ".xlsm"):
         raise ValueError("Select an A2 .xlsx or .xlsm workbook.")
-    book = load_workbook(source, keep_vba=source.suffix.lower() == ".xlsm")
+    log(f"Selected A2 workbook: {source}")
+    with progress_stage("Loading workbook (large/network files can take time)"):
+        book = load_workbook(source, keep_vba=source.suffix.lower() == ".xlsm")
+    log(f"Loaded {len(book.worksheets)} sheets.")
     try:
-        tables = inspect_tables(book)
-        for table in tables:
-            add_correction_columns(book[table.sheet_name], table)
-        visible = visibility_picker(visibility_choices(book, tables)) if visibility_picker else visible_columns
-        for table in tables:
-            apply_visibility(book[table.sheet_name], visible)
-        write_summary(book, tables)
+        with progress_stage("Validating sheets and measurement columns"):
+            tables = inspect_tables(book)
+        for index, table in enumerate(tables, 1):
+            with progress_stage(f"Adding correction columns: sheet {index}/{len(tables)} {table.sheet_name}"):
+                add_correction_columns(book[table.sheet_name], table)
+        if visibility_picker:
+            log("Preparing column-selection options.")
+            choices = visibility_choices(book, tables)
+            log("Waiting for column selection. A window will open; check the taskbar if it is not visible.")
+            visible = visibility_picker(choices)
+            log("Column-selection step finished.")
+        else:
+            visible = visible_columns
+            log("Using supplied column visibility (None means show all).")
+        with progress_stage("Applying column visibility"):
+            for index, table in enumerate(tables, 1):
+                log(f"  Visibility: sheet {index}/{len(tables)} {table.sheet_name}")
+                apply_visibility(book[table.sheet_name], visible)
+        with progress_stage("Rebuilding Summary formulas and formatting"):
+            write_summary(book, tables)
         book.calculation = CalcProperties(calcId=0, fullCalcOnLoad=True, forceFullCalc=True, calcMode="auto")
         output = unique_output_path(source)
-        book.save(output)
-        print(f"Optional Phase A output saved: {output}", flush=True)
+        with progress_stage(f"Saving workbook: {output}"):
+            book.save(output)
+        log(f"Optional Phase A output saved: {output}")
+        log("Complete. The input workbook was not changed; Excel will recalculate formulas on opening.")
         return output
     finally:
         book.close()
 
 
 def main():
+    log("Optional Phase A finish started.")
     root = tk.Tk()
     root.withdraw()
     try:
+        log("Waiting for you to select an A2 categorized workbook.")
         source = filedialog.askopenfilename(
             parent=root, title="Select A2 categorized workbook — optional Phase A finish",
             filetypes=[("Excel workbooks", "*.xlsx *.xlsm")])
         if not source:
+            log("No file selected. Cancelled.")
             return
         output = build_optional_workbook(
             source, visibility_picker=lambda choices: choose_visible_columns(root, choices))
+        log("Showing completion message; click OK to close.")
         messagebox.showinfo("Optional Phase A finish", f"Created:\n{output}", parent=root)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
+        log(f"ERROR: {type(exc).__name__}: {exc}")
         messagebox.showerror("Optional output could not be created", str(exc), parent=root)
         raise  # Also retain the detailed error in PyCharm/app Activity output.
     finally:
