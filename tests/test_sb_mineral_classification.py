@@ -49,6 +49,17 @@ ASSOCIATION_EXAMPLES = {
     "Pyrargyrite-Asso": dict(Ag=30, Sb=11, S=9, O=50),
 }
 
+EXPECTED_FREE_ORDER = (
+    "Aurostibite", sb.AG_TETRAHEDRITE, "Andorite", "Cupropolybasite", "Pyrargyrite",
+    "Gudmundite", "Stibnite", "Tetrahedrite-(Fe)", "Zn-bearing Tetrahedrite",
+    "Boulangerite", "Bournonite", "Cinnabar",
+)
+EXPECTED_ASSOCIATION_ORDER = (
+    "Aurostibite-Asso", "Andorite-Asso", "Cupropolybasite-Asso", "Pyrargyrite-Asso",
+    "Gudmundite-Asso", "Stibnite-Asso", "Tetrahedrite-(Fe)-Asso",
+    "Boulangerite-Asso", "Bournonite-Asso", "Cinnabar-Asso",
+)
+
 
 def row(elements, area=100):
     return {sb.AREA_COLUMN: area, **{f"{name} (Wt%)": value for name, value in elements.items()}}
@@ -136,8 +147,8 @@ class RulesTests(unittest.TestCase):
         base = dict(Cu=35, Sb=30, S=26, Fe=5)
         for changes, expected in [
             (dict(Ag=2, Zn=2), sb.AG_TETRAHEDRITE),
-            (dict(Ag=1.999, Zn=2), "Zn-bearing Tetrahedrite"),
-            (dict(Ag=1.999, Zn=1.999), "Tetrahedrite-(Fe)"),
+            (dict(Ag=1.499, Zn=2), "Zn-bearing Tetrahedrite"),
+            (dict(Ag=1.499, Zn=1.999), "Tetrahedrite-(Fe)"),
         ]:
             self.assertEqual(sb.classify_mineral(row({**base, **changes})), expected)
         self.assertEqual(sb.classify_mineral(row(dict(Pb=44, Sb=25, S=19, Cu=10))), "Bournonite")
@@ -145,6 +156,36 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(sb.classify_mineral(row(dict(Ag=40, Cu=20, Sb=16, S=20))), "Cupropolybasite")
         # A stephanite-like ratio must not be forced into free pyrargyrite.
         self.assertNotEqual(sb.classify_mineral(row(dict(Ag=64, Sb=17, S=17))), "Pyrargyrite")
+
+    def test_precious_element_caps_apply_to_every_free_and_association_rule(self):
+        examples = {**FREE_EXAMPLES, **ASSOCIATION_EXAMPLES}
+        for rule in sb.FREE_RULES + sb.ASSOCIATION_RULES:
+            for element in ("Au", "Ag"):
+                if element in rule.ranges:
+                    continue
+                with self.subTest(category=rule.name, element=element):
+                    self.assertEqual(rule.caps[element], 1.5)
+                    baseline = examples[rule.name]
+                    self.assertEqual(sb.classify_mineral(row({**baseline, element: 1.499})), rule.name)
+                    for value in (1.5, 3):
+                        self.assertNotEqual(sb.classify_mineral(row({**baseline, element: value})), rule.name)
+
+    def test_other_impurities_relaxed_but_diagnostic_boundaries_kept(self):
+        gudmundite = FREE_EXAMPLES["Gudmundite"]
+        self.assertEqual(sb.classify_mineral(row({**gudmundite, "Cu": 7.999, "Pb": 7.999})), "Gudmundite")
+        self.assertNotEqual(sb.classify_mineral(row({**gudmundite, "Cu": 8})), "Gudmundite")
+        rules = {r.name: r for r in sb.FREE_RULES + sb.ASSOCIATION_RULES}
+        self.assertEqual(rules["Boulangerite"].caps["Cu"], 4)
+        self.assertEqual(rules["Boulangerite-Asso"].caps["Cu"], 3)
+        self.assertEqual(rules["Stibnite-Asso"].caps["Fe"], 7)
+        self.assertEqual(rules["Pyrargyrite-Asso"].caps["Cu"], 5)
+        self.assertEqual(rules["Tetrahedrite-(Fe)"].caps["Zn"], 2)
+
+    def test_display_order_is_separate_from_routing_order(self):
+        self.assertEqual(sb.FREE_ORDER, EXPECTED_FREE_ORDER)
+        self.assertEqual(sb.ASSOCIATION_ORDER, EXPECTED_ASSOCIATION_ORDER)
+        self.assertEqual(tuple(r.name for r in sb.FREE_RULES), tuple(FREE_EXAMPLES))
+        self.assertEqual(tuple(r.name for r in sb.ASSOCIATION_RULES), tuple(ASSOCIATION_EXAMPLES))
 
     def test_ambiguity_retained_for_review(self):
         rules = (sb.MineralRule("Candidate A", {"Sb": (3, 10)}),
@@ -183,7 +224,12 @@ class WorkbookTests(unittest.TestCase):
                 self.assertIn("Ag-AgHg Tetrahedrite (Fe)", book.sheetnames)
                 self.assertEqual(len(book.sheetnames), 30)  # 26 categories + four standard sheets.
                 self.assertTrue(all(len(name) <= 31 for name in book.sheetnames))
+                expected_categories = EXPECTED_FREE_ORDER + EXPECTED_ASSOCIATION_ORDER + (
+                    "Au-Sb Leftover", "Ag-Sb Leftover", "Sb Leftover", "After Size-CutOff")
+                self.assertEqual(book.sheetnames[3:-1], [sb.excel_safe_sheet_name(n) for n in expected_categories])
                 summary = book["Summary"]
+                self.assertEqual([summary.cell(r, 1).value for r in range(2, summary.max_row + 1)],
+                                 list(expected_categories))
                 for cells in summary.iter_rows(min_row=2):
                     self.assertIsNone(cells[1].value)
                     self.assertIsNone(cells[2].value)
@@ -215,6 +261,20 @@ class WorkbookTests(unittest.TestCase):
             pd.DataFrame({"Ag (Wt%)": [10], sb.AREA_COLUMN: [10]}).to_excel(source, index=False)
             with self.assertRaisesRegex(ValueError, "Sb"):
                 sb.build_classified_workbook(source)
+
+    def test_empty_categories_omitted_and_present_categories_sorted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "Subset.xlsx"
+            pd.DataFrame([row(FREE_EXAMPLES["Gudmundite"]), row(FREE_EXAMPLES["Aurostibite"])]).to_excel(source, index=False)
+            output = sb.build_classified_workbook(source)
+            book = load_workbook(output)
+            try:
+                self.assertEqual(book.sheetnames,
+                                 ["Area", "Summary", "Raw Data", "Aurostibite", "Gudmundite", "Integrity Check"])
+                self.assertEqual(book["Summary"]["A2"].value, "Aurostibite")
+                self.assertEqual(book["Summary"]["A3"].value, "Gudmundite")
+            finally:
+                book.close()
 
     def test_existing_app_runner_can_launch_standalone_script(self):
         # Exercise the app's real legacy-runner function without importing Qt.

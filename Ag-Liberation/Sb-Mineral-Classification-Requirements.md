@@ -131,7 +131,7 @@ broad Ag/Ag-Hg-bearing or Zn-bearing tetrahedrite categories.
 - Tetrahedrite subcategories: propose Ag-bearing first, then Zn-bearing, then
   ordinary Fe tetrahedrite, with mutually exclusive additional tests. This
   priority is implemented with Ag >=2 before Zn >=2; remaining ordinary
-  tetrahedrite requires Ag <2 and Zn <2.
+  tetrahedrite requires Ag <1.5 and Zn <2.
   Under an Ag >=2 priority, grains with Ag 3–4% enter the Ag-bearing category.
 - Association envelopes overlap especially strongly. Au, Hg, Pb, Cu and Ag
   safeguards must be mineral-specific so a broad association rule does not
@@ -185,7 +185,7 @@ not direct wt.% ratios. These supplemental conditions can reject a candidate
 that passes its primary ranges; the feature then reaches another named rule or
 one of the requested leftovers.
 
-- Clean matrix caps: O <15 and Si, Al, Ca, Mg each <5. These do not apply to
+- Clean matrix caps: O <15 and Si, Al, Ca, Mg each <8. These do not apply to
   association categories.
 - Cupropolybasite (free and Asso): (Ag+Cu)/(Sb+As) atomic ratio >4.
 - Free tetrahedrite families: (Ag+Cu)/(Sb+As) atomic ratio 2–4.
@@ -196,46 +196,72 @@ one of the requested leftovers.
 - Aurostibite-Asso: Au/Sb atomic ratio 0.1–1.0 to prevent every Au+Sb mixture
   from automatically receiving this named association.
 
+## User update: precious-element caps and workbook order
+
+- Au and Ag each must be <1.5 wt.% wherever that element is not one of the
+  category's primary required elements. This applies to all free and association
+  rules. Aurostibite still requires Au; Ag minerals still require Ag.
+- Other former impurity caps below 8 are relaxed to <8, except these diagnostic
+  boundaries: free boulangerite Cu <4; boulangerite-Asso Cu <3; ordinary
+  tetrahedrite Zn <2; stibnite-Asso Fe <7; pyrargyrite-Asso Cu <5.
+- Existing allowances above 8 for oxygen, substitution and association hosts
+  remain unchanged. The initial minor-element caps are therefore not a blanket
+  maximum for elements that are part of the required mineral or its host.
+- Primary ranges, atomic-ratio checks, W/La exclusion, area cutoff, stages and
+  rule evaluation sequence remain unchanged. Ag at 1.5–<2 fails the ordinary
+  tetrahedrite cap and does not meet the Ag-bearing category's minimum; it is
+  retained in the existing appropriate leftover, not forced into a named group.
+- Workbook category order (and Summary order), independently of rule evaluation:
+  Aurostibite; Ag/Ag-Hg-bearing tetrahedrite; Andorite; Cupropolybasite;
+  Pyrargyrite; Gudmundite; Stibnite; Tetrahedrite-(Fe); Zn-bearing tetrahedrite;
+  Boulangerite; Bournonite; Cinnabar. Then the existing association categories
+  in the corresponding order, followed by leftovers and After Size-CutOff.
+- Categories with no rows are omitted. Existing Area/Summary/Raw Data/Integrity
+  Check worksheet placement remains unchanged.
+
 The following tables are generated from the exact rules in the delivered script.
 
 ### Free caps
 
 | Category | Additional element caps (wt.%) | Ratio checks |
 | --- | --- | --- |
-| Gudmundite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Pb <5; Ag <4; Au <3; Hg <3; Bi <5; Te <3; Se <3; As <5 |  |
-| Aurostibite | O <15; Si <5; Al <5; Ca <5; Mg <5; S <4; Fe <5; Cu <5; Pb <5; Ag <5; Hg <5; Bi <5; Te <4; Se <4; As <5 |  |
-| Stibnite | O <15; Si <5; Al <5; Ca <5; Mg <5; Fe <5; Pb <5; Cu <4; Ag <4; Au <3; Hg <4; Bi <5; As <6; Te <4; Se <4 |  |
-| Boulangerite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Ag <4; Fe <4; Au <3; Hg <4; Bi <6; As <6; Te <4; Se <4 | Boulangerite ratio |
-| Cupropolybasite | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <4; Fe <5; Hg <5; Au <3; Bi <5; Te <4; Se <4 | Sb dominant over As, Cupropolybasite ratio |
-| Cinnabar | O <15; Si <5; Al <5; Ca <5; Mg <5; Ag <5; Cu <5; Fe <6; Pb <5; Au <3; Sb <4; Te <4; Se <4; Bi <5; As <5 |  |
-| Ag/Ag-Hg bearing Tetrahedrite (Fe) | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <5; Au <3; Bi <6; Te <4; Se <4; Fe <12; Zn <12 | Sb dominant over As, Tetrahedrite ratio |
-| Tetrahedrite-(Fe) | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <5; Au <3; Bi <6; Te <4; Se <4; Ag <2; Hg <3; Zn <2 | Sb dominant over As, Tetrahedrite ratio |
-| Andorite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Fe <4; Au <3; Hg <4; Bi <6; As <5; Te <4; Se <4 |  |
-| Zn-bearing Tetrahedrite | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <5; Au <3; Bi <6; Te <4; Se <4; Ag <2; Hg <3 | Sb dominant over As, Tetrahedrite ratio |
-| Bournonite | O <15; Si <5; Al <5; Ca <5; Mg <5; Ag <4; Fe <4; Au <3; Hg <4; Bi <6; As <5; Te <4; Se <4 |  |
-| Pyrargyrite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Pb <4; Fe <5; Au <3; Hg <5; Bi <5; Te <4; Se <4 | Sb dominant over As, Pyrargyrite ratio |
+| Gudmundite | O <15; Si <8; Al <8; Ca <8; Mg <8; Cu <8; Pb <8; Ag <1.5; Au <1.5; Hg <8; Bi <8; Te <8; Se <8; As <8 |  |
+| Aurostibite | O <15; Si <8; Al <8; Ca <8; Mg <8; S <8; Fe <8; Cu <8; Pb <8; Ag <1.5; Hg <8; Bi <8; Te <8; Se <8; As <8 |  |
+| Stibnite | O <15; Si <8; Al <8; Ca <8; Mg <8; Fe <8; Pb <8; Cu <8; Ag <1.5; Au <1.5; Hg <8; Bi <8; As <8; Te <8; Se <8 |  |
+| Boulangerite | O <15; Si <8; Al <8; Ca <8; Mg <8; Cu <4; Ag <1.5; Fe <8; Au <1.5; Hg <8; Bi <8; As <8; Te <8; Se <8 | Boulangerite ratio |
+| Cupropolybasite | O <15; Si <8; Al <8; Ca <8; Mg <8; Pb <8; Fe <8; Hg <8; Au <1.5; Bi <8; Te <8; Se <8 | Sb dominant over As, Cupropolybasite ratio |
+| Cinnabar | O <15; Si <8; Al <8; Ca <8; Mg <8; Ag <1.5; Cu <8; Fe <8; Pb <8; Au <1.5; Sb <8; Te <8; Se <8; Bi <8; As <8 |  |
+| Ag/Ag-Hg bearing Tetrahedrite (Fe) | O <15; Si <8; Al <8; Ca <8; Mg <8; Pb <8; Au <1.5; Bi <8; Te <8; Se <8; Fe <12; Zn <12 | Sb dominant over As, Tetrahedrite ratio |
+| Tetrahedrite-(Fe) | O <15; Si <8; Al <8; Ca <8; Mg <8; Pb <8; Au <1.5; Bi <8; Te <8; Se <8; Ag <1.5; Hg <8; Zn <2 | Sb dominant over As, Tetrahedrite ratio |
+| Andorite | O <15; Si <8; Al <8; Ca <8; Mg <8; Cu <8; Fe <8; Au <1.5; Hg <8; Bi <8; As <8; Te <8; Se <8 |  |
+| Zn-bearing Tetrahedrite | O <15; Si <8; Al <8; Ca <8; Mg <8; Pb <8; Au <1.5; Bi <8; Te <8; Se <8; Ag <1.5; Hg <8 | Sb dominant over As, Tetrahedrite ratio |
+| Bournonite | O <15; Si <8; Al <8; Ca <8; Mg <8; Ag <1.5; Fe <8; Au <1.5; Hg <8; Bi <8; As <8; Te <8; Se <8 |  |
+| Pyrargyrite | O <15; Si <8; Al <8; Ca <8; Mg <8; Cu <8; Pb <8; Fe <8; Au <1.5; Hg <8; Bi <8; Te <8; Se <8 | Sb dominant over As, Pyrargyrite ratio |
 
 ### Association caps
 
 | Category | Additional element caps (wt.%) | Ratio checks |
 | --- | --- | --- |
-| Gudmundite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <8; Pb <5; Ag <4; Au <4; Hg <10 |  |
-| Aurostibite-Asso | As <12; Bi <30; Te <8; Se <8; Ag <25; Cu <25; Pb <30; Hg <20; Fe <65 | Aurostibite association ratio |
-| Stibnite-Asso | As <12; Bi <30; Te <8; Se <8; Fe <7; Cu <8; Pb <5; Ag <4; Au <4; Hg <10 |  |
-| Boulangerite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <3; Ag <2; Fe <12; Au <4; Hg <10 |  |
-| Cupropolybasite-Asso | As <12; Bi <30; Te <8; Se <8; Pb <5; Fe <25; Au <4; Hg <10 | Sb dominant over As, Cupropolybasite ratio |
-| Cinnabar-Asso | As <12; Bi <30; Te <8; Se <8; Ag <8; Cu <15; Pb <20; Fe <35; Au <4; Sb <10 |  |
-| Andorite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <3; Fe <25; Au <4; Hg <10 |  |
-| Tetrahedrite-(Fe)-Asso | As <12; Bi <30; Te <8; Se <8; Ag <4; Pb <5; Zn <15; Hg <10; Au <4 |  |
-| Bournonite-Asso | As <12; Bi <30; Te <8; Se <8; Ag <2; Fe <25; Au <4; Hg <10 |  |
-| Pyrargyrite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <5; Pb <5; Fe <30; Hg <10; Au <4 | Sb dominant over As, Pyrargyrite association ratio |
+| Gudmundite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <8; Pb <8; Ag <1.5; Au <1.5; Hg <10 |  |
+| Aurostibite-Asso | As <12; Bi <30; Te <8; Se <8; Ag <1.5; Cu <25; Pb <30; Hg <20; Fe <65 | Aurostibite association ratio |
+| Stibnite-Asso | As <12; Bi <30; Te <8; Se <8; Fe <7; Cu <8; Pb <8; Ag <1.5; Au <1.5; Hg <10 |  |
+| Boulangerite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <3; Ag <1.5; Fe <12; Au <1.5; Hg <10 |  |
+| Cupropolybasite-Asso | As <12; Bi <30; Te <8; Se <8; Pb <8; Fe <25; Au <1.5; Hg <10 | Sb dominant over As, Cupropolybasite ratio |
+| Cinnabar-Asso | As <12; Bi <30; Te <8; Se <8; Ag <1.5; Cu <15; Pb <20; Fe <35; Au <1.5; Sb <10 |  |
+| Andorite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <8; Fe <25; Au <1.5; Hg <10 |  |
+| Tetrahedrite-(Fe)-Asso | As <12; Bi <30; Te <8; Se <8; Ag <1.5; Pb <8; Zn <15; Hg <10; Au <1.5 |  |
+| Bournonite-Asso | As <12; Bi <30; Te <8; Se <8; Ag <1.5; Fe <25; Au <1.5; Hg <10 |  |
+| Pyrargyrite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <5; Pb <8; Fe <30; Hg <10; Au <1.5 | Sb dominant over As, Pyrargyrite association ratio |
 
 ## Validation performed
 
-Twelve unittest cases cover all 22 named examples; independently transcribed
+Sixteen unittest cases cover all 22 named examples; independently transcribed
 primary ranges and endpoints; all W/La and size boundaries; leftover precedence;
 Ag/Zn tetrahedrite boundaries; representative competing-mineral cases;
 ambiguity handling; invalid data; all output categories and sheet names;
 blank Summary totals; input-file hashes; unique output naming; empty inputs;
 required columns; and execution through the existing app runner with GUI
-selections mocked. These are software checks, not validation on real lab data.
+selections mocked. Added cases verify strict Au/Ag boundaries for every
+relevant rule, impurity caps and diagnostic exceptions, unchanged rule
+evaluation order, exact workbook/Summary ordering, and omission of empty
+categories. These are software checks, not validation on real lab data.
