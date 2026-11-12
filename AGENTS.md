@@ -9,6 +9,17 @@ This repository contains laboratory automation and data-processing tools for:
 - SEM to uScope file preparation
 - supporting utilities for Excel, Word, images, and file handling
 
+## Authoritative Au/Ag-Te sources — read before workflow edits
+
+- The user re-supplied `AuAgTe-Code-Handoff.zip` on 2026-11-12. Its 16 Python files are the authoritative local copies, until the user supplies a replacement or authorizes specific changes. Do not use older GitHub/main or environment snapshots as the baseline.
+- Exact archive and manifest: `reference-baselines/2026-11-12/`. The root `SHA256-MANIFEST.txt` records the supplied script paths and byte hashes. Compare the active scripts against it at the start of workflow work. Investigate differences: they may be later authorized edits. Never automatically revert an edited script just to match the baseline.
+- Recovery branch: `codex/auagte-authoritative-2026-11-12` in `kamalpreet99kp/SEMEDSuScope`. The recovery README records provenance and verification. If a fresh environment is on an older snapshot, recover the verified files from that branch/archive before developing; preserve unrelated work.
+- `Ag-Liberation/Updated-AllAgMinerals-41-19.py` is 419 lines in this baseline, SHA-256 `256d65756f308da710119eca203d35d542aa87ef1ff0de3f94c449f8d13527b6`. Verify it before inheriting classification, area cutoff, summary or integrity behavior.
+- The ZIP contains a 399-line `Summary_Each_Sample.py`. It overrides the previously edited active copy per the user's latest archive instruction. The separately preserved `reference-baselines/2026-11-12/Summary_Each_Sample.pre-handoff.py` contains the previously tested summary enhancements; do not silently merge or reactivate them.
+- Read `Ag-Liberation/Sb-Mineral-Classification-Requirements.md` before Sb work. Do not create the Sb classifier until the user authorizes implementation. Keep it standalone in Ag-Liberation; do not edit the app now.
+- When changing/referencing scripts, provide direct workspace file links. Do not paste full scripts unless requested.
+- A local commit is not a durable remote backup. Report remote persistence only after verifying the branch/commit and remote file hashes. Do not promise that a temporary workspace cannot reset or that branch selection will persist automatically.
+
 ## User environment
 Assume the primary working environment is:
 - Windows

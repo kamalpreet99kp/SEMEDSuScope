@@ -13,6 +13,7 @@ import tempfile
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from tkinter import (
     BOTH,
     END,
@@ -34,11 +35,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageOps
 from docx import Document
-from docx.enum.section import WD_SECTION
-from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.shared import Pt
 
 
@@ -107,71 +104,12 @@ def safe_output_stem(sample_name: str) -> str:
     return cleaned or "Microscope Image Report"
 
 
-def remove_table_borders(table) -> None:
-    """Hide every border in a Word table."""
-    table_properties = table._tbl.tblPr
-    borders = table_properties.first_child_found_in("w:tblBorders")
-    if borders is None:
-        borders = OxmlElement("w:tblBorders")
-        table_properties.append(borders)
-    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        tag = f"w:{edge}"
-        element = borders.find(qn(tag))
-        if element is None:
-            element = OxmlElement(tag)
-            borders.append(element)
-        element.set(qn("w:val"), "nil")
-
-
-def prevent_row_split(row) -> None:
-    """Keep all three images in a report row on the same page."""
-    row_properties = row._tr.get_or_add_trPr()
-    if row_properties.find(qn("w:cantSplit")) is None:
-        row_properties.append(OxmlElement("w:cantSplit"))
-
-
-def set_cell_margins(cell, left: int = 0, right: int = 0, top: int = 0, bottom: int = 0) -> None:
-    """Set table-cell margins in twentieths of a point (twips)."""
-    cell_properties = cell._tc.get_or_add_tcPr()
-    margins = cell_properties.first_child_found_in("w:tcMar")
-    if margins is None:
-        margins = OxmlElement("w:tcMar")
-        cell_properties.append(margins)
-    for name, value in (("left", left), ("right", right), ("top", top), ("bottom", bottom)):
-        node = margins.find(qn(f"w:{name}"))
-        if node is None:
-            node = OxmlElement(f"w:{name}")
-            margins.append(node)
-        node.set(qn("w:w"), str(value))
-        node.set(qn("w:type"), "dxa")
-
-
-def configure_section(section, category_name: str, first_category: bool) -> None:
-    """Apply the macro margins and a repeating category header."""
+def configure_section(section) -> None:
+    """Apply the macro margins without adding a Word page header."""
     section.left_margin = Pt(MARGIN_POINTS)
     section.right_margin = Pt(MARGIN_POINTS)
     section.top_margin = Pt(MARGIN_POINTS)
     section.bottom_margin = Pt(BOTTOM_MARGIN_POINTS)
-    section.different_first_page_header_footer = True
-
-    header = section.header
-    header.is_linked_to_previous = False
-    paragraph = header.paragraphs[0]
-    paragraph.clear()
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = paragraph.add_run(category_name)
-    run.bold = True
-    run.font.size = Pt(14)
-
-    first_header = section.first_page_header
-    first_header.is_linked_to_previous = False
-    first_paragraph = first_header.paragraphs[0]
-    first_paragraph.clear()
-    # The category is placed in the document body on its first page. Keeping
-    # this first-page header empty prevents the heading from appearing twice.
-
-    if first_category:
-        section.header_distance = Pt(18)
 
 
 def add_centered_heading(document: Document, text: str, size: int, space_after: int) -> None:
@@ -188,15 +126,15 @@ def add_centered_heading(document: Document, text: str, size: int, space_after: 
 def prepare_word_image(image_path: Path, temporary_folder: Path) -> tuple[Path, int, int]:
     """Validate an image, apply EXIF orientation, and provide Word-safe data."""
     with Image.open(image_path) as image:
-        upright = ImageOps.exif_transpose(image)
-        width, height = upright.size
         requires_conversion = image_path.suffix.casefold() not in {".jpg", ".jpeg", ".png"}
-        orientation_changed = upright.size != image.size or upright is not image
+        exif_orientation = image.getexif().get(274, 1)
+        orientation_changed = exif_orientation not in (None, 1)
 
         if not requires_conversion and not orientation_changed:
-            return image_path, width, height
+            return image_path, image.width, image.height
 
-        converted = upright
+        converted = ImageOps.exif_transpose(image)
+        width, height = converted.size
         if converted.mode not in {"RGB", "L"}:
             background = Image.new("RGB", converted.size, "white")
             if "A" in converted.getbands():
@@ -209,57 +147,48 @@ def prepare_word_image(image_path: Path, temporary_folder: Path) -> tuple[Path, 
         return output_path, width, height
 
 
-def add_image_table(document: Document, images: tuple[Path, ...], temporary_folder: Path) -> list[str]:
-    """Add images in the macro's three-column layout and return skipped errors."""
+def add_inline_image_block(
+    document: Document,
+    images: tuple[Path, ...],
+    temporary_folder: Path,
+    image_processed: Callable[[Path], None] | None = None,
+) -> list[str]:
+    """Add one editable, automatically reflowing image block for a fraction."""
     section = document.sections[-1]
     page_width = section.page_width.pt
     page_height = section.page_height.pt
     usable_width = page_width - section.left_margin.pt - section.right_margin.pt
     usable_height = page_height - TOP_OFFSET_POINTS - section.top_margin.pt - section.bottom_margin.pt
-    slot_width = (usable_width - 2 * GAP_POINTS) / IMAGES_PER_ROW
+    # Leave a small tolerance for Word's line-layout rounding. Separator spaces
+    # provide approximately the macro's five-point horizontal gap.
+    slot_width = (usable_width - 2 * GAP_POINTS - 3) / IMAGES_PER_ROW
     slot_height = (usable_height - (ROWS_PER_PAGE - 1) * GAP_POINTS) / ROWS_PER_PAGE
-
-    table = document.add_table(rows=0, cols=IMAGES_PER_ROW)
-    table.autofit = False
-    remove_table_borders(table)
+    paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(GAP_POINTS)
+    paragraph.paragraph_format.line_spacing = Pt(slot_height + GAP_POINTS)
+    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     errors: list[str] = []
 
-    for start in range(0, len(images), IMAGES_PER_ROW):
-        row = table.add_row()
-        prevent_row_split(row)
-        row.height = Pt(slot_height)
-        row.height_rule = WD_ROW_HEIGHT_RULE.EXACTLY
-
-        for column, cell in enumerate(row.cells):
-            cell.width = Pt(slot_width)
-            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-            half_gap_twips = int(GAP_POINTS * 10)
-            set_cell_margins(
-                cell,
-                left=0 if column == 0 else half_gap_twips,
-                right=0 if column == IMAGES_PER_ROW - 1 else half_gap_twips,
+    for image_index, image_path in enumerate(images):
+        try:
+            prepared_path, pixel_width, pixel_height = prepare_word_image(image_path, temporary_folder)
+            scale = min(slot_width / pixel_width, slot_height / pixel_height)
+            paragraph.add_run().add_picture(
+                str(prepared_path),
+                width=Pt(pixel_width * scale),
+                height=Pt(pixel_height * scale),
             )
-            paragraph = cell.paragraphs[0]
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            paragraph.paragraph_format.space_before = Pt(0)
-            paragraph.paragraph_format.space_after = Pt(0)
+            if image_index < len(images) - 1:
+                separator = paragraph.add_run(" ")
+                separator.font.size = Pt(GAP_POINTS * 4)
+        except (OSError, ValueError) as exc:
+            errors.append(f"{image_path}: {exc}")
+        finally:
+            if image_processed is not None:
+                image_processed(image_path)
 
-            image_index = start + column
-            if image_index >= len(images):
-                continue
-            image_path = images[image_index]
-            try:
-                prepared_path, pixel_width, pixel_height = prepare_word_image(image_path, temporary_folder)
-                scale = min(slot_width / pixel_width, slot_height / pixel_height)
-                paragraph.add_run().add_picture(
-                    str(prepared_path),
-                    width=Pt(pixel_width * scale),
-                    height=Pt(pixel_height * scale),
-                )
-            except (OSError, ValueError) as exc:
-                errors.append(f"{image_path}: {exc}")
-
-    document.add_paragraph().paragraph_format.space_after = Pt(0)
     return errors
 
 
@@ -269,11 +198,28 @@ def build_report(
     category_order: list[str],
     selections: OrderedDict[str, list[CategorySelection]],
     output_path: Path,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> list[str]:
     """Create and save the complete mineral image report."""
     document = Document()
+    configure_section(document.sections[0])
     first_category = True
     errors: list[str] = []
+    total_images = sum(len(item.images) for group in selections.values() for item in group)
+    processed_images = 0
+
+    def image_processed(image_path: Path) -> None:
+        nonlocal processed_images
+        processed_images += 1
+        if progress_callback is not None:
+            progress_callback(
+                processed_images,
+                total_images,
+                f"Processing image {processed_images} of {total_images}: {image_path.name}",
+            )
+
+    if progress_callback is not None:
+        progress_callback(0, total_images, f"Preparing report for {total_images} image(s)...")
 
     with tempfile.TemporaryDirectory(prefix="mineral_word_report_") as temporary_name:
         temporary_folder = Path(temporary_name)
@@ -293,11 +239,11 @@ def build_report(
                 continue
 
             category_name = category_groups[0][1]
-            if first_category:
-                section = document.sections[0]
-            else:
-                section = document.add_section(WD_SECTION.NEW_PAGE)
-            configure_section(section, category_name, first_category)
+            if not first_category:
+                # An ordinary page break starts every category automatically.
+                # Unlike a section break, users can easily delete it in Word
+                # if they later want the category to use space on the prior page.
+                document.add_page_break()
 
             if first_category:
                 add_centered_heading(document, sample_name, size=18, space_after=6)
@@ -311,13 +257,18 @@ def build_report(
                 run = heading.add_run(fraction)
                 run.bold = True
                 run.font.size = Pt(12)
-                errors.extend(add_image_table(document, images, temporary_folder))
+                errors.extend(add_inline_image_block(document, images, temporary_folder, image_processed))
 
             first_category = False
 
         if first_category:
             raise ValueError("No categories with images were available for the report.")
+        if progress_callback is not None:
+            progress_callback(total_images, total_images, "Saving Word report...")
         document.save(output_path)
+
+    if progress_callback is not None:
+        progress_callback(total_images, total_images, "Word report created successfully.")
 
     return errors
 
@@ -381,6 +332,9 @@ class MineralReportApp:
         folder_buttons = Frame(selected_frame)
         folder_buttons.pack(fill=X)
         Button(folder_buttons, text="Add category folder", command=self.add_category_folder).pack(side=LEFT)
+        Button(folder_buttons, text="Add all subfolders", command=self.add_all_category_subfolders).pack(
+            side=LEFT, padx=3
+        )
         Button(folder_buttons, text="Remove folder", command=self.remove_category_folder).pack(side=RIGHT)
 
         category_frame = Frame(content)
@@ -397,7 +351,15 @@ class MineralReportApp:
         bottom.pack(fill=X, padx=12, pady=(4, 12))
         self.status = Label(bottom, text="Add a size fraction, then add its category folders.", anchor="w")
         self.status.pack(side=LEFT, fill=X, expand=True)
-        Button(bottom, text="Create Word Report", command=self.create_report, font=("Segoe UI", 10, "bold")).pack(side=RIGHT)
+        self.create_button = Button(
+            bottom,
+            text="Create Word Report",
+            command=self.create_report,
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.create_button.pack(side=RIGHT)
+        self.progress_bar = ttk.Progressbar(bottom, mode="determinate", length=240)
+        self.progress_bar.pack(side=RIGHT, padx=10)
 
     def selected_fraction(self) -> str | None:
         selection = self.fraction_list.curselection()
@@ -476,6 +438,75 @@ class MineralReportApp:
         self.refresh_category_folder_list()
         self.status.config(text=f"Added {folder.name}: {len(images)} image(s) for {fraction}.")
 
+    def add_all_category_subfolders(self) -> None:
+        """Add every valid category beneath one selected parent folder."""
+        fraction = self.selected_fraction()
+        if not fraction:
+            messagebox.showwarning("Select a size fraction", "Add or select a size fraction first.", parent=self.root)
+            return
+        selected = filedialog.askdirectory(
+            title=f"Select the parent folder containing all categories for {fraction}",
+            parent=self.root,
+        )
+        if not selected:
+            return
+
+        parent_folder = Path(selected)
+        try:
+            category_folders = sorted(
+                (path for path in parent_folder.iterdir() if path.is_dir()),
+                key=natural_sort_key,
+            )
+        except OSError as exc:
+            messagebox.showerror("Folder could not be read", str(exc), parent=self.root)
+            return
+
+        added_categories = 0
+        added_images = 0
+        skipped: list[str] = []
+        existing_paths = {item.folder.resolve() for item in self.selections[fraction]}
+
+        for folder in category_folders:
+            cropped_folder = find_cropped_folder(folder)
+            if cropped_folder is None:
+                skipped.append(f"{folder.name}: no cropped folder")
+                continue
+            images = find_images(cropped_folder)
+            if not images:
+                skipped.append(f"{folder.name}: cropped folder has no supported images")
+                continue
+            resolved = folder.resolve()
+            if resolved in existing_paths:
+                skipped.append(f"{folder.name}: already added")
+                continue
+
+            item = CategorySelection(folder.name, folder, cropped_folder, images)
+            self.selections[fraction].append(item)
+            existing_paths.add(resolved)
+            category_key = folder.name.casefold()
+            if category_key not in self.category_names:
+                self.category_names[category_key] = folder.name
+                self.category_list.insert(END, folder.name)
+            added_categories += 1
+            added_images += len(images)
+
+        self.refresh_category_folder_list()
+        self.status.config(
+            text=f"Added {added_categories} categories and {added_images} images for {fraction}."
+        )
+        summary = (
+            f"Parent folder: {parent_folder}\n\n"
+            f"Categories added: {added_categories}\n"
+            f"Images added: {added_images}\n"
+            f"Folders skipped: {len(skipped)}"
+        )
+        if skipped:
+            displayed = skipped[:20]
+            summary += "\n\nSkipped:\n" + "\n".join(displayed)
+            if len(skipped) > len(displayed):
+                summary += f"\n...and {len(skipped) - len(displayed)} more"
+        messagebox.showinfo("Category folders processed", summary, parent=self.root)
+
     def refresh_category_folder_list(self) -> None:
         self.folder_list.delete(0, END)
         fraction = self.selected_fraction()
@@ -549,6 +580,12 @@ class MineralReportApp:
             keys = [listbox.get(position).casefold() for position in range(listbox.size())]
             self.category_names = OrderedDict((key, self.category_names[key]) for key in keys)
 
+    def update_progress(self, completed: int, total: int, message: str) -> None:
+        """Update report-generation status while the document is being built."""
+        self.progress_bar.configure(maximum=max(total, 1), value=completed)
+        self.status.config(text=message)
+        self.root.update_idletasks()
+
     def create_report(self) -> None:
         sample_name = self.sample_name.get().strip()
         if not sample_name:
@@ -570,6 +607,8 @@ class MineralReportApp:
 
         fraction_order = [self.fraction_list.get(i) for i in range(self.fraction_list.size())]
         category_order = [self.category_list.get(i).casefold() for i in range(self.category_list.size())]
+        self.create_button.config(state="disabled")
+        self.progress_bar.configure(maximum=1, value=0)
         try:
             errors = build_report(
                 sample_name,
@@ -577,10 +616,14 @@ class MineralReportApp:
                 category_order,
                 self.selections,
                 output_path,
+                progress_callback=self.update_progress,
             )
         except (OSError, ValueError) as exc:
             messagebox.showerror("Report could not be created", str(exc), parent=self.root)
+            self.status.config(text="Report creation failed.")
             return
+        finally:
+            self.create_button.config(state="normal")
 
         total_images = sum(len(item.images) for group in self.selections.values() for item in group)
         message = f"Report saved successfully.\n\n{output_path}\n\nImages selected: {total_images}"

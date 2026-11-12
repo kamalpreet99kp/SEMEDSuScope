@@ -1,0 +1,149 @@
+# Sb Mineral Classification — requirements awaiting implementation
+
+These requirements record the user's instructions of 2026-11-12. No classifier
+has been created. Do not replace the user's ranges with previous proposed ranges.
+
+## Verified authoritative reference (recovered 2026-11-12)
+
+- User re-supplied `AuAgTe-Code-Handoff.zip`; all 16 Python files matched its
+  manifest and passed syntax checks. All seven app script constants and all
+  eight current A2 dropdown scripts are present.
+- `Updated-AllAgMinerals-41-19.py`: 419 lines, SHA-256
+  `256d65756f308da710119eca203d35d542aa87ef1ff0de3f94c449f8d13527b6`.
+- The archive, manifest and earlier tested summary copy are preserved under
+  `reference-baselines/2026-11-12/`. The new archive is authoritative for active
+  script paths, including its older 399-line Summary_Each_Sample.py.
+- Recovery branch: `codex/auagte-authoritative-2026-11-12`. A local commit alone
+  is not a persistence guarantee; confirm remote storage before claiming backup.
+
+## Confirmed behavior to inherit/adapt
+
+- GUI selects the Full Analysis workbook. The first input sheet supplies data.
+- An Area Size Cutoff GUI prompt accepts a nonnegative value in square micrometres.
+  Initial value 0 disables size filtering; cancelling also uses 0.
+- In the reference, elemental eligibility is checked before size routing.
+  Eligible features with `Area < cutoff` go to `After Size-CutOff`; equality
+  passes. No fixed size-fraction presets or automatic diameter threshold exist
+  in this particular reference. Do not substitute Tellurides' size logic.
+- Reference eligibility is Ag >1.4 OR Au >1.4. This is element-specific and
+  must be adapted for Sb and the requested Sb-free cinnabar, not copied literally.
+- Non-empty category sheets only, a separate blank Area sheet, full Raw Data,
+  Summary, Integrity Check, original feature/coordinate columns, and Excel-safe
+  sheet names. The reference's output name is Classified<original filename>.
+- Summary lists category names but intentionally leaves area and percentage
+  cells blank for later manual microscope-image corrections. Do not replace
+  these blanks with calculated totals in the new classifier.
+- Integrity Check includes the actual area cutoff and compares eligible raw
+  count/area with all output category sheets, including After Size-CutOff.
+  The Sb version must also account for the new W/La exclusions consistently.
+- The reference handles missing/NaN optional element values through v(); it
+  validates required Ag and area columns. Required-element validation must be
+  adapted to the Sb workflow rather than assuming Ag is always required.
+- Preserve existing column highlight colors, Summary styling and standalone
+  execution. Do not modify the reference itself or the app.
+- W >10 and La >7 are explicit new user requirements for this classifier;
+  they are not implemented in the verified Updated-AllAg reference.
+
+## Scope
+
+- Eventual script: `Ag-Liberation/Sb Mineral Classification.py`.
+- Independently runnable first. No application modifications now.
+- Preserve the verified reference's non-classification behavior, adapting
+  element-specific selection and integrity checks for Sb. The verified manual area cutoff
+  applies; do not introduce automatic fraction presets.
+- All ranges below are wt.%; listed range endpoints are inclusive.
+- These primary ranges require additional mineral-specific exclusion conditions;
+  ranges alone are not a finished classification specification.
+
+## Free categories — user-specified ranges
+
+| Category | Element ranges |
+| --- | --- |
+| Gudmundite | Sb 44–65; Fe 17–32; S 5–20 |
+| Aurostibite | Au 35–51; Sb 42–65 |
+| Stibnite | Sb 58–78; S 14–38 |
+| Boulangerite | Pb 42–64; Sb 16–34; S 6–28 |
+| Cupropolybasite | Ag 30–58; Cu 13–28; Sb 4–18; S 7–23 |
+| Cinnabar | Hg 60–95; S 4–20 |
+| Ag/Ag-Hg-bearing tetrahedrite | Ag 2–45; Cu 15–45; Sb 15–35; S 10–31; Hg 0–25 |
+| Tetrahedrite-(Fe) | Cu 22–45; Sb 20–37; S 15–31; Fe 1–10 |
+| Andorite | Ag 4–18; Pb 14–31; Sb 30–48; S 12–28 |
+| Zn-bearing tetrahedrite | Cu 22–45; Sb 20–37; S 15–31; Zn 2–11; Fe 0–8 |
+| Bournonite | Pb 30–46; Sb 12–30; S 7–24; Cu 4–19 |
+| Pyrargyrite | Ag 30–65; Sb 14–29; S 7–22 |
+
+## Association categories — user-specified ranges
+
+| Category | Element ranges |
+| --- | --- |
+| Gudmundite-Asso | Sb 15–60; Fe 7–65; S 3–45 |
+| Aurostibite-Asso | Au 4–51; Sb 10–62 |
+| Stibnite-Asso | Sb 15–77; S 5–48 |
+| Boulangerite-Asso | Pb 15–65; Sb 5–31; S 4–40 |
+| Cupropolybasite-Asso | Ag 4–56; Cu 5–40; Sb 4–18; S 4–40 |
+| Cinnabar-Asso | Hg 20–90; S 4–40 |
+| Andorite-Asso | Ag 2–17; Pb 5–50; Sb 10–47; S 4–40 |
+| Tetrahedrite-(Fe)-Asso | Cu 8–43; Sb 5–35; S 5–45; Fe 1–45 |
+| Bournonite-Asso | Pb 12–46; Sb 5–30; S 4–24; Cu 3–19 |
+| Pyrargyrite-Asso | Ag 4–65; Sb 5–29; S 4–22 |
+
+The last association entry was written as "Pyrargyrite" in the user's message;
+the working interpretation is Pyrargyrite-Asso because it appears in the
+association list. No separate association categories were requested for the
+broad Ag/Ag-Hg-bearing or Zn-bearing tetrahedrite categories.
+
+## Exclusions and final routing
+
+1. Exclude W >10 wt.% or La >7 wt.% from every mineral and leftover category.
+   Equality at W=10 or La=7 is not excluded by these tests.
+2. Apply the verified manual area cutoff and route eligible undersized features
+   to After Size-CutOff. Do not assume a global Ag requirement or invent fraction presets.
+3. Evaluate free-mineral conditions before association conditions.
+4. Apply final leftovers only after named-mineral evaluation:
+   - Au-Sb Leftover: Sb >2 and Au >2.
+   - Ag-Sb Leftover: Sb >2 and Ag >2, if not already assigned.
+   - Sb Leftover: Sb >2, if not already assigned.
+5. A grain satisfying both Au-Sb and Ag-Sb leftovers goes to Au-Sb under the
+   listed precedence, unless the user changes it.
+6. Cinnabar must be considered without requiring Sb, because HgS has no Sb.
+7. One output category per feature. Excluded features remain traceable in raw
+   data and integrity counts. Input workbooks must not be modified.
+
+## Proposed discrimination safeguards — not yet approved thresholds
+
+- Use mineral-specific non-member-element caps, following the verified
+  reference's approach. Do not invent a single cap for every mineral.
+- Aurostibite: sulphur and unrelated base-metal caps are needed to separate
+  clean Au-Sb compositions from sulphide associations.
+- Stibnite versus gudmundite: Fe discrimination is essential. Their user-defined
+  primary ranges overlap at Sb 58–65 and S 14–20.
+- Boulangerite versus bournonite: Cu discrimination is essential. Primary ranges
+  overlap at Pb 42–46, Sb 16–30 and S 7–24.
+- Pyrargyrite versus cupropolybasite: Cu discrimination is essential; the Sb/Ag/S
+  windows overlap. Do not impose a Cu cap on a category that requires Cu.
+- Cupropolybasite versus Ag-rich tetrahedrite: the supplied major-element
+  windows overlap even with Cu present. Additional elemental proportions or
+  an explicit ambiguity policy are needed; rule order alone is insufficient.
+- Tetrahedrite subcategories: propose Ag-bearing first, then Zn-bearing, then
+  ordinary Fe tetrahedrite, with mutually exclusive additional tests. This
+  priority still requires agreement for grains with both Ag >=2 and Zn >=2.
+  Under an Ag >=2 priority, grains with Ag 3–4% enter the Ag-bearing category.
+- Association envelopes overlap especially strongly. Au, Hg, Pb, Cu and Ag
+  safeguards must be mineral-specific so a broad association rule does not
+  capture another named mineral. For genuinely ambiguous mixtures, retain
+  candidate/review information rather than claiming a unique mineral identity.
+- Additional candidate elements As, Bi, Te, Se, O, Si, Al, Ca and Mg need
+  appropriate treatment for substitution, oxidation, matrix contribution and
+  interference. Missing diagnostic element columns must not silently count as
+  confirmed zero measurements for exclusion purposes.
+
+## Validation required before delivery
+
+- Retain the verified reference provenance and non-classification-rule audit.
+- Boundary tests for every user-specified range and strict exclusion threshold.
+- Representative grains, known competitors and deliberate multi-match cases.
+- No mineral or association is swallowed by a premature leftover rule.
+- Equal eligible raw/output row counts and areas with separate excluded counts.
+- Standalone execution, syntax checking, safe Excel sheet names and unique
+  sheet-name mapping (some requested display labels exceed Excel's 31 characters).
+

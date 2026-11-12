@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 
-crop_value = 0.9  # Fraction of original width/height to keep
+crop_value = 0.4 # Fraction of original width/height to keep
 SUPPORTED_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp")
 SAMPLE_CLICKS_PER_SUBFOLDER = 3
 

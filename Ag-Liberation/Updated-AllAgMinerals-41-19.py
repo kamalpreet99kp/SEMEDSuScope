@@ -2,7 +2,7 @@ import os
 import re
 import pandas as pd
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, simpledialog
 
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Alignment, Font, Border, Side
@@ -45,7 +45,7 @@ def has_required_columns(df, required_columns):
     return [col for col in required_columns if col not in df.columns]
 
 
-def classify_mineral(row):
+def classify_mineral(row, area_cutoff=0):
     ag = v(row, "Ag (Wt%)")
     s = v(row, "S (Wt%)")
     hg = v(row, "Hg (Wt%)")
@@ -59,18 +59,22 @@ def classify_mineral(row):
     au = v(row, "Au (Wt%)")
     pb = v(row, "Pb (Wt%)")
     o = v(row, "O (Wt%)")
+    area = v(row, "Area (sq. µm)")
 
-    if ag <= AG_CUTOFF and au < 30:
+    if ag <= AG_CUTOFF and au <= AG_CUTOFF:
         return None
 
+    if area_cutoff > 0 and area < area_cutoff:
+        return "After Size-CutOff"
+
     # ============================================================
-    # 1) NATIVE AG / AU-AG ALLOY - clean categories only
+    # 1) NATIVE AG / AU-ELECTRUM - clean category first
     # ============================================================
-    if (au >= 30 and (ag < TRACE_NATIVE or ag > 2) and
-            s < TRACE and te < TRACE and se < TRACE and
-            ars < TRACE and sb < TRACE and hg < TRACE and bi < TRACE and
-            pb < TRACE and cu < TRACE and fe < TRACE):
-        return "Au-Ag alloy"
+    if (au > AG_CUTOFF and ag >= 0 and
+            0 <= cu <= 20 and 0 <= hg <= 20 and
+            s < 20 and te < 20 and se < 20 and ars < 20 and sb < 20 and
+            bi < 20 and pb < 20 and fe < 20):
+        return "Au- Electrum"
 
     if (ag >= 82 and o <= 25 and s < TRACE_NATIVE and te < TRACE_NATIVE and
             se < TRACE_NATIVE and ars < TRACE_NATIVE and sb < TRACE_NATIVE and
@@ -108,6 +112,11 @@ def classify_mineral(row):
             fe < 5 and pb < PB_CLEAN_CAP):
         return "Bohdanowiczite"
 
+    if (60 <= ag <= 85 and 15 <= se <= 35 and s < 0.4 and
+            te < 5 and hg < 4 and ars < 4 and sb < 4 and bi < 6 and
+            pb < 6 and cu < 6 and fe < 6 and au < 5):
+        return "Naumannite"
+
     if (55 <= ag <= 85 and 7 <= se <= 20 and 2 <= s <= 10 and
             te < 5 and hg < 4 and ars < 4 and sb < 4 and bi < 6 and
             pb < 6 and cu < 6 and fe < 6 and au < 5):
@@ -117,24 +126,27 @@ def classify_mineral(row):
     # 4) AG SULFOSALTS - clean minerals before broad sulfide buckets
     # ============================================================
     if (45 <= ag <= 70 and 8 <= s <= 22 and 7 <= ars <= 18 and
-            sb < 5 and cu < 6 and hg < 5 and te < TRACE_STRICT and
+            sb < 2 and cu < 2 and hg < 5 and te < TRACE_STRICT and
             se < TRACE_STRICT and bi < 6 and pb < 6 and fe < 6 and au < 5):
-        return "Proustite-Xanthoconite"
+        return "Ag-As-Sulfosalt"
 
-    if (40 <= ag <= 65 and 8 <= s <= 20 and 8 <= cu <= 23 and
-            1 <= ars <= 8 and sb <= 3 and hg < 5 and te < TRACE_STRICT and
+    if (40 <= ag <= 69 and 7 <= s <= 22 and 5 <= cu <= 23 and
+            1 <= ars <= 9 and sb <= 3 and hg < 5 and te < TRACE_STRICT and
             se < TRACE_STRICT and bi < 6 and pb < 6 and fe < 8 and au < 5):
-        return "Cupropearceite"
+        return "Complex-Sulfosalt"
 
-    if (45 <= ag <= 73 and 8 <= sb <= 18 and 7 <= s <= 19 and
-            ars < 5 and cu < 6 and hg < 5 and te < TRACE_STRICT and
+    if (45 <= ag <= 73 and 8 <= sb <= 21 and 7 <= s <= 19 and
+            ars < 2 and cu < 2 and hg < 5 and te < TRACE_STRICT and
             se < TRACE_STRICT and bi < 6 and pb < 6 and fe < 6 and au < 5):
-        return "Stephanite"
+        return "Ag-Sb-Sulfosalt"
 
     if (ag >= 30 and sb >= 6 and s < 5 and te < 5 and se < 5 and
             ars < 5 and hg < 5 and bi < 5 and au < 5 and cu < 5 and
             fe < 5 and pb < PB_CLEAN_CAP):
         return "Dyscrasite"
+
+    if au > AG_CUTOFF:
+        return "Au- Electrum-Asso"
 
     # ============================================================
     # 5) AG SULFIDES / AG-HG - clean minerals
@@ -144,46 +156,49 @@ def classify_mineral(row):
             sb < TRACE_STRICT and bi < 6 and pb < 6 and cu < 6 and fe < 6):
         return "Acanthite"
 
-    if (25 <= ag <= 52 and 22 <= hg <= 46 and 6 <= s <= 16 and
+    if (25 <= ag <= 52 and 22 <= hg <= 48 and 6 <= s <= 16 and
             te < TRACE_STRICT and se < TRACE_STRICT and ars < 4 and sb < 4 and
             bi < 6 and pb < 6 and cu < 6 and fe < 6 and au < 5):
         return "Imiterite"
 
+    # Imiterite association, including possible Imiterite + cinnabar mixtures
+    # where Hg can be very high but Ag + S still indicate an Ag-Hg-S association.
+    if (ag >= 1.4 and hg > 1.5 and s > 2 and ars < 4 and sb < 4 and
+            se < 4 and te < 4 and bi < 40 and cu < 25 and fe < 26 and
+            pb < PB_ASSO_CAP and au < 5):
+        return "Imiterite-Asso"
+
     # ============================================================
     # 6) HIGH-PB GALENA ASSOCIATION - should win over broad asso groups
     # ============================================================
-    if ag >= AG_CUTOFF and pb >= 30 and s >= 4 and te < 4 and se < 4:
-        return "Ag Inclusion-Association-Rim with Galena"
+    if ag >= AG_CUTOFF and pb >= 30 and s >= 4 and te < 4 and se < 4 and au < 5:
+        return "AgInc-Asso-RimWtPbS"
 
     # ============================================================
     # 7) ASSOCIATION CATEGORIES
     # ============================================================
-    if ag > AG_CUTOFF and te >= TELLURIDE_GATE:
-        if au >= AG_CUTOFF:
-            return "All Other Au-Te"
+    if ag > AG_CUTOFF and te >= TELLURIDE_GATE and au < 5:
         return "All Others Ag-Te"
 
-    if (ag >= 3 and se >= SELENIDE_ASSO_GATE and s > 1 and te < 6 and hg < 4 and
+    if (ag >= 3 and se >= SELENIDE_ASSO_GATE and s < 12 and te < 6 and hg < 4 and
             ars < 8 and sb < 8 and bi < 20 and pb < PB_ASSO_CAP and
-            cu < 20 and fe < 20):
-        return "Aguilarite-Asso"
+            cu < 20 and fe < 20 and au < 5):
+        return "Aguila+Nauma Asso"
 
-    if (ag > 10 and hg > 4 and s > 2 and ars < 5 and sb < 5 and
-            se < 5 and te < 6 and bi < 40 and cu < 25 and fe < 26 and
-            pb < PB_ASSO_CAP):
-        return "Imiterite-Asso"
+    if (ag > AG_CUTOFF and sb >= 4 and s < 5 and te < 5 and se < SELENIDE_ASSO_GATE and
+            ars < 5 and hg < 5 and bi < 20 and pb < PB_ASSO_CAP and
+            cu < 10 and fe < 10 and au < 5):
+        return "Dyscrasite-Asso"
 
     if (ag >= 20 and s >= 2.5 and se < 2.5 and hg < 2.5 and
             ars < 2.5 and sb < 2.5 and te < 4 and bi < 40 and
-            cu < 25 and fe < 26 and pb < PB_ASSO_CAP):
+            cu < 25 and fe < 26 and pb < PB_ASSO_CAP and au < 5):
         return "Acanthite-Asso"
 
-    if (ag > AG_CUTOFF and s >= SULFIDE_GATE and te < 5 and se < 5 and
-            (ars >= 2 or sb >= 1) and pb < PB_ASSO_CAP):
+    if (ag > AG_CUTOFF and s >= SULFIDE_GATE and te < 5 and se < SELENIDE_ASSO_GATE and
+            hg < 5 and pb < PB_ASSO_CAP and au < 5 and bi < 40 and fe < 26 and
+            (ars >= 2 or sb >= 2 or (cu >= 4 and ars >= 1))):
         return "Ag-Sulfosalt-Asso"
-
-    if ag > AG_CUTOFF and s >= 2.5 and te < 5 and se < 5 and pb < PB_ASSO_CAP:
-        return "Ag Associations with Sulphides"
 
     if ag > AG_CUTOFF:
         return "All Others Ag"
@@ -194,8 +209,12 @@ def classify_mineral(row):
 # ============================================================
 #  FILE SELECT
 # ============================================================
-tk.Tk().withdraw()
+root = tk.Tk()
+root.withdraw()
+
+print("Select the Excel file to classify...")
 file_path = filedialog.askopenfilename(
+    parent=root,
     title="Select Full Analysis Excel File",
     filetypes=[("Excel files", "*.xlsx *.xls")]
 )
@@ -204,9 +223,11 @@ if not file_path:
     print("No file selected.")
     raise SystemExit
 
+print(f"Loading workbook: {file_path}")
 book = pd.read_excel(file_path, sheet_name=None)
 raw_sheet_name = list(book.keys())[0]
 df = book[raw_sheet_name].copy()
+print(f"Loaded sheet: {raw_sheet_name} with {len(df)} rows.")
 
 required_columns = ["Ag (Wt%)", "Area (sq. µm)"]
 missing_columns = has_required_columns(df, required_columns)
@@ -215,39 +236,55 @@ if missing_columns:
         "The selected workbook is missing required column(s): " + ", ".join(missing_columns)
     )
 
-df["Mineral Type"] = df.apply(classify_mineral, axis=1)
 area_column = "Area (sq. µm)"
 
-all_categories_in_order = [
-    # Native / Au-Ag
-    "Native Ag",
-    "Au-Ag alloy",
+print("Waiting for Area (sq. µm) size cutoff entry...")
+size_cutoff = simpledialog.askfloat(
+    "Area Size Cutoff",
+    "Enter Area (sq. µm) cutoff for this sample.\n"
+    "Features smaller than this value will go to the After Size-CutOff sheet.\n"
+    "Enter 0 to disable size filtering.",
+    parent=root,
+    minvalue=0,
+    initialvalue=0,
+)
 
-    # Ag tellurides
+if size_cutoff is None:
+    print("No size cutoff entered. Size filtering disabled for this run.")
+    size_cutoff = 0
+
+print(f"Classifying rows using Area cutoff: {size_cutoff} sq. µm")
+df["Mineral Type"] = df.apply(lambda row: classify_mineral(row, size_cutoff), axis=1)
+print("Classification step complete.")
+
+all_categories_in_order = [
+    # Clean/free categories first, in requested sequence
+    "Au- Electrum",
+    "Native Ag",
+    "Acanthite",
+    "Ag-As-Sulfosalt",
+    "Complex-Sulfosalt",
+    "Ag-Sb-Sulfosalt",
+    "Dyscrasite",
+    "Imiterite",
     "Petzite",
     "Hessite",
     "Volynskite",
-    "All Other Au-Te",
-    "All Others Ag-Te",
-
-    # Ag selenides / Ag-Se-S
     "Bohdanowiczite",
+    "Naumannite",
     "Aguilarite",
-    "Aguilarite-Asso",
 
-    # Ag sulfosalts and sulfides
-    "Proustite-Xanthoconite",
-    "Cupropearceite",
-    "Stephanite",
-    "Dyscrasite",
-    "Acanthite",
-    "Imiterite",
-    "Ag Inclusion-Association-Rim with Galena",
-    "Imiterite-Asso",
+    # Association categories next, following the same sequence where present
+    "Au- Electrum-Asso",
     "Acanthite-Asso",
     "Ag-Sulfosalt-Asso",
-    "Ag Associations with Sulphides",
+    "Dyscrasite-Asso",
+    "Imiterite-Asso",
+    "All Others Ag-Te",
+    "Aguila+Nauma Asso",
+    "AgInc-Asso-RimWtPbS",
     "All Others Ag",
+    "After Size-CutOff",
 ]
 
 classified_sheets = {}
@@ -260,9 +297,17 @@ for cat in all_categories_in_order:
     classified_sheets[cat] = df_cat.drop(columns=["Mineral Type"])
     summary_rows.append((cat, df_cat[area_column].sum()))
 
-summary_df = pd.DataFrame(summary_rows, columns=["Type of Mineral", "Total Sum of Area (sq. µm)"])
-total_area = summary_df["Total Sum of Area (sq. µm)"].sum()
-summary_df["Percentage"] = (summary_df["Total Sum of Area (sq. µm)"] / total_area * 100) if total_area else 0
+print("Non-empty output categories:")
+for cat, area_sum in summary_rows:
+    print(f"  - {cat}: area sum = {area_sum}")
+
+# Summary intentionally lists only category names.
+# Area and percentage cells are left blank for manual microscope-image corrections later.
+summary_df = pd.DataFrame({
+    "Type of Mineral": [cat for cat, _area_sum in summary_rows],
+    "Total Sum of Area (sq. µm)": [None for _cat, _area_sum in summary_rows],
+    "Percentage": [None for _cat, _area_sum in summary_rows],
+})
 
 output_path = os.path.join(os.path.dirname(file_path), f"Classified{os.path.basename(file_path)}")
 
@@ -270,6 +315,7 @@ output_path = os.path.join(os.path.dirname(file_path), f"Classified{os.path.base
 # ============================================================
 #  WRITE OUTPUT EXCEL
 # ============================================================
+print(f"Writing output workbook: {output_path}")
 with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
     pd.DataFrame().to_excel(writer, sheet_name="Area", index=False)
     summary_df.to_excel(writer, sheet_name="Summary", index=False)
@@ -279,7 +325,7 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         if cat in classified_sheets:
             classified_sheets[cat].to_excel(writer, sheet_name=excel_safe_sheet_name(cat), index=False)
 
-    df_focus = df[(df["Ag (Wt%)"] > AG_CUTOFF) | (df.get("Au (Wt%)", 0) >= 30)]
+    df_focus = df[(df["Ag (Wt%)"] > AG_CUTOFF) | (df.get("Au (Wt%)", 0) > AG_CUTOFF)]
     raw_count = len(df_focus)
     raw_area = df_focus[area_column].sum()
     classified_total_count = sum(len(classified_sheets[k]) for k in classified_sheets.keys())
@@ -287,15 +333,17 @@ with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
 
     integrity_data = {
         "Metric": [
-            f"Rows with Ag > {AG_CUTOFF}% or Au >= 30% in Raw Data",
+            f"Rows with Ag > {AG_CUTOFF}% or Au > {AG_CUTOFF}% in Raw Data",
+            "Area size cutoff used (sq. µm)",
             "Total rows in classified sheets (non-empty only)",
-            f"Area in Raw Data (Ag > {AG_CUTOFF}% or Au >= 30%)",
+            f"Area in Raw Data (Ag > {AG_CUTOFF}% or Au > {AG_CUTOFF}%)",
             "Area in classified sheets (non-empty only)",
             "Area Match",
             "Row Count Match",
         ],
         "Value": [
             raw_count,
+            size_cutoff,
             classified_total_count,
             round(raw_area, 4),
             round(classified_total_area, 4),
@@ -334,6 +382,7 @@ thin_border = Border(
     top=Side(style="thin"), bottom=Side(style="thin")
 )
 
+print("Applying Excel formatting...")
 wb = load_workbook(output_path)
 
 for sheet in wb.sheetnames:
@@ -367,3 +416,4 @@ if "Summary" in wb.sheetnames:
         cell.font = Font(bold=True)
 
 wb.save(output_path)
+print("Formatting complete.")
