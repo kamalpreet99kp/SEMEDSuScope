@@ -4,16 +4,19 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 
 IGNORE_SHEETS = {"Area", "Summary", "Raw Data", "Integrity Check", "Check Report"}
-REQUIRED_HEADERS = ["Feature", "New Brea", "New Len", "Asso"]
+REQUIRED_HEADERS = ["Feature", "Area Orig", "Corr %", "New Brea", "New Len", "Asso", "Diam", "New Area"]
+OPTIONAL_HEADERS = {"Diam", "New Area"}
 HEADER_BLANK_ROWS = 5
 BLOCK_GAP_COLUMNS = 2
+BLOCK_COLORS = ("D9E5F2", "E2EFDA", "FCE4D6", "E4DFEC")
 
 
 class LiveLogger:
@@ -35,6 +38,8 @@ class LiveLogger:
 def clean_fraction_name(filename: str) -> str:
     stem = Path(filename).stem
     stem = re.sub(r"^Complete-MASTER_Classified_Tellurides_", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"_Excel_with_quick_links", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"MASTER_Classified_?", "", stem, flags=re.IGNORECASE)
     stem = re.sub(r"\s*\(AuTe\s*Scan\)\s*$", "", stem, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", stem).strip() or stem
 
@@ -137,17 +142,19 @@ def choose_file_order_gui(root: tk.Tk, files: Sequence[Path]) -> List[Path]:
 
 
 def discover_categories(files: Sequence[Path], logger: LiveLogger) -> List[str]:
-    cats = set()
+    cats = []
+    seen = set()
     for p in files:
         try:
-            xls = pd.ExcelFile(p)
-            for s in xls.sheet_names:
-                if s not in IGNORE_SHEETS:
-                    cats.add(s)
+            with pd.ExcelFile(p) as xls:
+                for s in xls.sheet_names:
+                    if s not in IGNORE_SHEETS and s not in seen:
+                        cats.append(s)
+                        seen.add(s)
             logger.write(f"Read sheets from: {p.name}")
         except Exception as exc:
             logger.write(f"WARNING: Could not read {p.name}: {exc}")
-    return sorted(cats, key=lambda x: x.lower())
+    return cats
 
 
 def choose_categories_gui(root: tk.Tk, categories: Sequence[str]) -> List[str]:
@@ -207,118 +214,222 @@ def choose_categories_gui(root: tk.Tk, categories: Sequence[str]) -> List[str]:
 
 
 def extract_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
+    """Keep source column order, appending missing columns as blank fields."""
     cols_map = {str(c).strip().lower(): c for c in df.columns}
-    found = []
+    canonical = {header.lower(): header for header in REQUIRED_HEADERS}
+    ordered = []
+    for original in df.columns:
+        header = canonical.get(str(original).strip().lower())
+        if header is not None and header not in ordered:
+            ordered.append(header)
+    ordered.extend(header for header in REQUIRED_HEADERS if header not in ordered)
+    out = pd.DataFrame(index=df.index)
     missing = []
-    for wanted in REQUIRED_HEADERS:
-        k = wanted.lower()
-        if k in cols_map:
-            found.append(cols_map[k])
+    for wanted in ordered:
+        original = cols_map.get(wanted.lower())
+        if original is None:
+            out[wanted] = None
+            if wanted not in OPTIONAL_HEADERS:
+                missing.append(wanted)
         else:
-            missing.append(wanted)
-    if not found:
-        return pd.DataFrame(columns=REQUIRED_HEADERS), missing
-    out = df[found].copy()
-    out.columns = [h for h in REQUIRED_HEADERS if h.lower() in cols_map]
+            out[wanted] = df[original].values
     return out, missing
 
 
-def format_block_sheet(ws):
-    for col in range(1, ws.max_column + 1):
-        max_len = 10
-        for row in range(1, ws.max_row + 1):
-            val = ws.cell(row=row, column=col).value
-            if val is not None:
-                max_len = max(max_len, len(str(val)))
-        ws.column_dimensions[get_column_letter(col)].width = min(max_len + 2, 34)
+def read_values(file_path: Path, sheet_name: str, logger: LiveLogger) -> pd.DataFrame:
+    """Read cached results only; never carry source formulas into the summary."""
+    if file_path.suffix.lower() == ".xls":
+        return pd.read_excel(file_path, sheet_name=sheet_name)
+    values_book = load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        if sheet_name not in values_book.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not present in this file")
+        rows = list(values_book[sheet_name].values)
+        # Excel must have calculated/saved formula results before values-only copying.
+        formulas_book = load_workbook(file_path, read_only=True, data_only=False)
+        try:
+            uncached = 0
+            for formula_row, value_row in zip(
+                formulas_book[sheet_name].iter_rows(), rows
+            ):
+                for source, value in zip(formula_row, value_row):
+                    if source.data_type == "f" and value is None:
+                        uncached += 1
+            if uncached:
+                logger.write(
+                    f"WARNING: {file_path.name} / {sheet_name}: {uncached} formula(s) "
+                    "have no saved result. These cells will be blank. "
+                    "Open, recalculate and save the input in Excel, then rerun."
+                )
+        finally:
+            formulas_book.close()
+        if not rows:
+            return pd.DataFrame()
+        headers = rows[0]
+        data = list(rows[1:])
+        while data and all(value is None for value in data[-1]):
+            data.pop()
+        return pd.DataFrame(data, columns=headers)
+    finally:
+        values_book.close()
+
+
+def put_value(ws, row: int, column: int, value):
+    """Write data literally, including text that starts with an equals sign."""
+    if value is None or pd.isna(value):
+        value = None
+    cell = ws.cell(row=row, column=column, value=value)
+    if isinstance(value, str):
+        cell.data_type = "s"
+    return cell
+
+
+def format_block_sheet(ws, blocks):
+    """Style fraction blocks with a common bottom edge and compact columns."""
+    last_row = max(ws.max_row, HEADER_BLANK_ROWS + 1)
+    edge = Side(style="thick", color="52657A")
+    total_edge = Side(style="thin", color="52657A")
+    for index, (start, width) in enumerate(blocks):
+        end = start + width - 1
+        fill = PatternFill(fill_type="solid", fgColor=BLOCK_COLORS[index % len(BLOCK_COLORS)])
+        for col in range(start, end + 1):
+            ws.cell(1, col).fill = fill
+        ws.merge_cells(start_row=1, start_column=start, end_row=1, end_column=end)
+        title = ws.cell(1, start)
+        title.font = Font(name="Calibri", size=11, bold=True, color="20364D")
+        title.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for col in range(start, end + 1):
+            header = str(ws.cell(HEADER_BLANK_ROWS + 1, col).value).strip().lower()
+            is_feature = header == "feature"
+            is_area = header in {"area orig", "new area"}
+            for row in range(1, last_row + 1):
+                cell = ws.cell(row, col)
+                area_outline = is_area and row >= 3
+                cell.border = Border(
+                    left=edge if col == start else total_edge if area_outline else Side(),
+                    right=edge if col == end else total_edge if area_outline else Side(),
+                    top=edge if row == 1 else total_edge if is_area and row == 3 else Side(),
+                    bottom=edge if row == last_row else total_edge if is_area and row in (4, 6) else Side(),
+                )
+                if is_area and row in (3, 4):
+                    cell.fill = fill
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                if row > HEADER_BLANK_ROWS and not isinstance(cell, MergedCell):
+                    cell.font = Font(name="Calibri", size=11, bold=row == HEADER_BLANK_ROWS + 1)
+                    cell.alignment = Alignment(vertical="center", wrap_text=True)
+                    if row == HEADER_BLANK_ROWS + 1:
+                        cell.fill = fill
+                    elif isinstance(cell.value, (int, float)):
+                        cell.number_format = "General" if is_feature else "0.000"
+            # Size for the displayed fixed-decimal numbers, including the total.
+            # Keep text compact and wrapped, but never cap numeric widths.
+            longest = 8
+            numeric_width = 0
+            for row in range(HEADER_BLANK_ROWS + 1, last_row + 1):
+                value = ws.cell(row, col).value
+                if value is not None:
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        text = str(value) if is_feature else f"{value:.3f}"
+                        numeric_width = max(numeric_width, len(text))
+                    else:
+                        longest = max(longest, len(str(value)))
+            if is_area and ws.cell(4, col).data_type == "f":
+                # This estimate is for sizing only; the saved total remains a SUM formula.
+                total_value = sum(
+                    ws.cell(row, col).value
+                    for row in range(HEADER_BLANK_ROWS + 2, last_row + 1)
+                    if isinstance(ws.cell(row, col).value, (int, float))
+                    and not isinstance(ws.cell(row, col).value, bool)
+                )
+                numeric_width = max(numeric_width, len(f"{total_value:.3f}"))
+            ws.column_dimensions[get_column_letter(col)].width = max(
+                min(longest + 2, 22), numeric_width + 3
+            )
+        if index < len(blocks) - 1:
+            for col in range(end + 1, end + BLOCK_GAP_COLUMNS + 1):
+                ws.column_dimensions[get_column_letter(col)].width = 3
+    ws.row_dimensions[1].height = 32
+    ws.freeze_panes = "A7"
+    ws.sheet_view.showGridLines = False
+
+
+def write_frame(ws, frame: pd.DataFrame, start: int):
+    header_row = HEADER_BLANK_ROWS + 1
+    for offset, header in enumerate(frame.columns):
+        put_value(ws, header_row, start + offset, str(header))
+    for row, values in enumerate(frame.itertuples(index=False, name=None), start=header_row + 1):
+        for offset, value in enumerate(values):
+            put_value(ws, row, start + offset, value)
+    # These are new summary-local formulas; all copied data remains values only.
+    for offset, header in enumerate(frame.columns):
+        if str(header).strip().lower() in {"area orig", "new area"}:
+            col = start + offset
+            letter = get_column_letter(col)
+            put_value(ws, 3, col, "Total")
+            total = ws.cell(4, col)
+            total.value = f"=SUM({letter}{header_row + 1}:{letter}{header_row + len(frame)})" if len(frame) else "=0"
+            total.font = Font(bold=True, color="20364D")
+            total.number_format = "0.000"
 
 
 def write_category_sheet(wb: Workbook, category: str, selected_files: Sequence[Path], logger: LiveLogger):
     ws = wb.create_sheet(title=category[:31])
-    row_start = 1 + HEADER_BLANK_ROWS
+    blocks = []
     current_col = 1
-
-    header_fill = PatternFill(fill_type="solid", fgColor="D9E1F2")
-    header_font = Font(bold=True)
-
     for file_path in selected_files:
-        file_label = clean_fraction_name(file_path.name)
-        ws.cell(row=1, column=current_col, value=file_label)
-        ws.cell(row=1, column=current_col).font = Font(bold=True, size=11)
-
+        blocks.append((current_col, len(REQUIRED_HEADERS)))
+        put_value(ws, 1, current_col, clean_fraction_name(file_path.name))
         try:
-            if category not in pd.ExcelFile(file_path).sheet_names:
-                ws.cell(row=row_start, column=current_col, value=f"Sheet '{category}' not present in this file")
-                current_col += len(REQUIRED_HEADERS) + BLOCK_GAP_COLUMNS
-                continue
-
-            df_cat = pd.read_excel(file_path, sheet_name=category)
-            picked, missing = extract_columns(df_cat)
-
-            for i, h in enumerate(picked.columns, start=0):
-                cell = ws.cell(row=row_start, column=current_col + i, value=h)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center")
-
-            for r_idx, row_vals in enumerate(picked.itertuples(index=False), start=row_start + 1):
-                for c_idx, val in enumerate(row_vals, start=0):
-                    ws.cell(row=r_idx, column=current_col + c_idx, value=val)
-
+            picked, missing = extract_columns(read_values(file_path, category, logger))
+            write_frame(ws, picked, current_col)
             if missing:
-                msg_row = row_start + 1
-                ws.cell(row=msg_row, column=current_col + len(picked.columns), value="Missing:")
-                ws.cell(row=msg_row, column=current_col + len(picked.columns) + 1, value=", ".join(missing))
-
+                note = "Missing: " + ", ".join(missing)
+                put_value(ws, 2, current_col, note)
+                logger.write(f"WARNING: {file_path.name} / {category}: {note}")
             logger.write(f"{category} <- {file_path.name}: {len(picked)} rows")
-
         except Exception as exc:
-            ws.cell(row=row_start, column=current_col, value=f"Error reading file/sheet: {exc}")
+            write_frame(ws, pd.DataFrame(columns=REQUIRED_HEADERS), current_col)
+            put_value(ws, 2, current_col, str(exc))
             logger.write(f"ERROR in {category} from {file_path.name}: {exc}")
-
         current_col += len(REQUIRED_HEADERS) + BLOCK_GAP_COLUMNS
-
-    format_block_sheet(ws)
+    format_block_sheet(ws, blocks)
 
 
 def write_area_sheet(wb: Workbook, selected_files: Sequence[Path], logger: LiveLogger):
     ws = wb.create_sheet(title="Area")
+    blocks = []
     current_col = 1
-    header_fill = PatternFill(fill_type="solid", fgColor="FCE4D6")
-
     for file_path in selected_files:
-        label = clean_fraction_name(file_path.name)
-        ws.cell(row=1, column=current_col, value=label)
-        ws.cell(row=1, column=current_col).font = Font(bold=True, size=11)
-
+        put_value(ws, 1, current_col, clean_fraction_name(file_path.name))
+        width = 1
         try:
-            if "Area" not in pd.ExcelFile(file_path).sheet_names:
-                ws.cell(row=2, column=current_col, value="Area sheet not present")
-                current_col += 12
-                continue
-
-            df_area = pd.read_excel(file_path, sheet_name="Area")
-            start_row = 1 + HEADER_BLANK_ROWS
-
-            for c, h in enumerate(df_area.columns, start=current_col):
-                cell = ws.cell(row=start_row, column=c, value=h)
-                cell.fill = header_fill
-                cell.font = Font(bold=True)
-                cell.alignment = Alignment(horizontal="center")
-
-            for r, vals in enumerate(df_area.itertuples(index=False), start=start_row + 1):
-                for c_off, val in enumerate(vals):
-                    ws.cell(row=r, column=current_col + c_off, value=val)
-
-            logger.write(f"Area <- {file_path.name}: {len(df_area)} rows")
-            current_col += max(12, len(df_area.columns) + BLOCK_GAP_COLUMNS)
-
+            frame = read_values(file_path, "Area", logger)
+            width = max(1, len(frame.columns))
+            write_frame(ws, frame, current_col)
+            logger.write(f"Area <- {file_path.name}: {len(frame)} rows")
         except Exception as exc:
-            ws.cell(row=2, column=current_col, value=f"Error reading Area sheet: {exc}")
+            put_value(ws, 2, current_col, str(exc))
             logger.write(f"ERROR Area from {file_path.name}: {exc}")
-            current_col += 12
+        blocks.append((current_col, width))
+        current_col += width + BLOCK_GAP_COLUMNS
+    format_block_sheet(ws, blocks)
 
-    format_block_sheet(ws)
+
+def sample_output_name(sample_name: str) -> str:
+    name = sample_name.strip()
+    if not name or re.search(r'[<>:"/\\|?*\x00-\x1f]', name) or name.endswith((".", " ")):
+        raise ValueError("Enter a sample name without Windows filename characters: < > : \" / \\ | ? *")
+    return f"Summary_{name}.xlsx"
+
+
+def save_summary(wb: Workbook, output: Path, input_files: Sequence[Path]):
+    """Prevent overwriting any source workbook, even through a linked path."""
+    for source in input_files:
+        if output.resolve() == source.resolve() or (
+            output.exists() and source.exists() and output.samefile(source)
+        ):
+            raise ValueError("The summary output must not replace an input workbook. Choose a new filename.")
+    wb.save(output)
 
 
 def main():
@@ -362,7 +473,16 @@ def main():
         root.destroy()
         return
 
-    out_default = sample_dir / f"{sample_dir.name}_Summary_Each_Sample.xlsx"
+    while True:
+        sample_name = simpledialog.askstring("Sample name", "Enter the sample name:", parent=root)
+        if sample_name is None:
+            root.destroy()
+            return
+        try:
+            out_default = sample_dir / sample_output_name(sample_name)
+            break
+        except ValueError as exc:
+            messagebox.showwarning("Invalid sample name", str(exc), parent=root)
     out_path = filedialog.asksaveasfilename(
         parent=root,
         title="Save Summary workbook",
@@ -384,7 +504,12 @@ def main():
 
     write_area_sheet(wb, selected_files, logger)
 
-    wb.save(out_path)
+    try:
+        save_summary(wb, Path(out_path), files)
+    except (OSError, ValueError) as exc:
+        messagebox.showerror("Summary not saved", str(exc), parent=root)
+        root.destroy()
+        return
     logger.write(f"Saved: {out_path}")
     messagebox.showinfo("Done", f"Summary workbook created:\n{out_path}", parent=root)
 

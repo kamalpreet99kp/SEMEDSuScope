@@ -1,7 +1,9 @@
-# Sb Mineral Classification — requirements awaiting implementation
+# Sb Mineral Classification — implemented requirements and safeguards
 
-These requirements record the user's instructions of 2026-11-12. No classifier
-has been created. Do not replace the user's ranges with previous proposed ranges.
+These requirements record the user's instructions of 2026-11-12. The user
+subsequently authorized implementation in Sb Mineral Classification.py. The
+primary ranges below are preserved exactly; additional safeguards are listed
+explicitly below for testing against real samples.
 
 ## Verified authoritative reference (recovered 2026-11-12)
 
@@ -12,7 +14,8 @@ has been created. Do not replace the user's ranges with previous proposed ranges
   `256d65756f308da710119eca203d35d542aa87ef1ff0de3f94c449f8d13527b6`.
 - The archive, manifest and earlier tested summary copy are preserved under
   `reference-baselines/2026-11-12/`. The new archive is authoritative for active
-  script paths, including its older 399-line Summary_Each_Sample.py.
+  script paths initially. The user subsequently restored the tested enhanced
+  Summary_Each_Sample.py as the sole current Summary authority.
 - Recovery branch: `codex/auagte-authoritative-2026-11-12`. A local commit alone
   is not a persistence guarantee; confirm remote storage before claiming backup.
 
@@ -47,7 +50,8 @@ has been created. Do not replace the user's ranges with previous proposed ranges
 ## Scope
 
 - Eventual script: `Ag-Liberation/Sb Mineral Classification.py`.
-- Independently runnable first. No application modifications now.
+- Independently runnable. Existing A2 Refresh scripts discovers it without
+  application modifications.
 - Preserve the verified reference's non-classification behavior, adapting
   element-specific selection and integrity checks for Sb. The verified manual area cutoff
   applies; do not introduce automatic fraction presets.
@@ -109,7 +113,7 @@ broad Ag/Ag-Hg-bearing or Zn-bearing tetrahedrite categories.
 7. One output category per feature. Excluded features remain traceable in raw
    data and integrity counts. Input workbooks must not be modified.
 
-## Proposed discrimination safeguards — not yet approved thresholds
+## Discrimination approach
 
 - Use mineral-specific non-member-element caps, following the verified
   reference's approach. Do not invent a single cap for every mineral.
@@ -126,7 +130,8 @@ broad Ag/Ag-Hg-bearing or Zn-bearing tetrahedrite categories.
   an explicit ambiguity policy are needed; rule order alone is insufficient.
 - Tetrahedrite subcategories: propose Ag-bearing first, then Zn-bearing, then
   ordinary Fe tetrahedrite, with mutually exclusive additional tests. This
-  priority still requires agreement for grains with both Ag >=2 and Zn >=2.
+  priority is implemented with Ag >=2 before Zn >=2; remaining ordinary
+  tetrahedrite requires Ag <2 and Zn <2.
   Under an Ag >=2 priority, grains with Ag 3–4% enter the Ag-bearing category.
 - Association envelopes overlap especially strongly. Au, Hg, Pb, Cu and Ag
   safeguards must be mineral-specific so a broad association rule does not
@@ -134,8 +139,9 @@ broad Ag/Ag-Hg-bearing or Zn-bearing tetrahedrite categories.
   candidate/review information rather than claiming a unique mineral identity.
 - Additional candidate elements As, Bi, Te, Se, O, Si, Al, Ca and Mg need
   appropriate treatment for substitution, oxidation, matrix contribution and
-  interference. Missing diagnostic element columns must not silently count as
-  confirmed zero measurements for exclusion purposes.
+  interference. Missing optional element columns use the reference
+  zero-default behavior, with an explicit console warning and a record in
+  Integrity Check. Sb and area columns are required.
 
 ## Validation required before delivery
 
@@ -147,3 +153,89 @@ broad Ag/Ag-Hg-bearing or Zn-bearing tetrahedrite categories.
 - Standalone execution, syntax checking, safe Excel sheet names and unique
   sheet-name mapping (some requested display labels exceed Excel's 31 characters).
 
+
+## Implemented processing and output
+
+- Eligibility: Sb >2 wt.% or a cinnabar/cinnabar-association match that passes
+  its safeguards. There is no global minimum Ag or Au requirement.
+- W >10 or La >7 never enters any category, including After Size-CutOff.
+- Non-numeric, negative or non-finite reported compositions, and invalid area,
+  are kept in Raw Data with Invalid data status, without mineral assignment.
+- All free rules are evaluated before association rules. Exactly one match
+  assigns the named category. Multiple matches within a stage go to the
+  appropriate leftover, with candidate names and a review note in Raw Data.
+- Categories and After Size-CutOff retain the original data columns. Raw Data
+  adds classification/status/candidate/note audit columns. No review sheet is
+  added that a downstream master script could mistake for a mineral category.
+- Original workbooks are not saved or modified. Output is Classified<input
+  stem>.xlsx, with _2, _3, etc. when an output already exists.
+- Summary area/percentage cells remain blank; Integrity Check reconciles
+  eligible counts/areas including After Size-CutOff, and accounts for excluded,
+  invalid and outside-scope rows separately.
+- The full Ag/Hg tetrahedrite label maps to the Excel-safe sheet name
+  `Ag-AgHg Tetrahedrite (Fe)`; Summary and raw audit retain the full label.
+- Association labels are compositional screening assignments. Images and
+  actual samples are needed to validate mineral associations and liberation.
+
+## Additional checks used in the initial implementation
+
+All caps are strict (<), and all ratio bounds are inclusive unless stated.
+Primary wt.% intervals above remain unchanged. Ratios use atomic proportions,
+not direct wt.% ratios. These supplemental conditions can reject a candidate
+that passes its primary ranges; the feature then reaches another named rule or
+one of the requested leftovers.
+
+- Clean matrix caps: O <15 and Si, Al, Ca, Mg each <5. These do not apply to
+  association categories.
+- Cupropolybasite (free and Asso): (Ag+Cu)/(Sb+As) atomic ratio >4.
+- Free tetrahedrite families: (Ag+Cu)/(Sb+As) atomic ratio 2–4.
+- Cupropolybasite, pyrargyrite and free tetrahedrite: Sb atomic amount >=As.
+- Free boulangerite: Pb/(Sb+As) atomic ratio 0.9–1.8, to reduce assignment of
+  jamesonite/geocronite-like compositions to the clean boulangerite category.
+- Free pyrargyrite: Ag/(Sb+As) atomic ratio 2–4; Asso uses 1.5–4.2.
+- Aurostibite-Asso: Au/Sb atomic ratio 0.1–1.0 to prevent every Au+Sb mixture
+  from automatically receiving this named association.
+
+The following tables are generated from the exact rules in the delivered script.
+
+### Free caps
+
+| Category | Additional element caps (wt.%) | Ratio checks |
+| --- | --- | --- |
+| Gudmundite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Pb <5; Ag <4; Au <3; Hg <3; Bi <5; Te <3; Se <3; As <5 |  |
+| Aurostibite | O <15; Si <5; Al <5; Ca <5; Mg <5; S <4; Fe <5; Cu <5; Pb <5; Ag <5; Hg <5; Bi <5; Te <4; Se <4; As <5 |  |
+| Stibnite | O <15; Si <5; Al <5; Ca <5; Mg <5; Fe <5; Pb <5; Cu <4; Ag <4; Au <3; Hg <4; Bi <5; As <6; Te <4; Se <4 |  |
+| Boulangerite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Ag <4; Fe <4; Au <3; Hg <4; Bi <6; As <6; Te <4; Se <4 | Boulangerite ratio |
+| Cupropolybasite | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <4; Fe <5; Hg <5; Au <3; Bi <5; Te <4; Se <4 | Sb dominant over As, Cupropolybasite ratio |
+| Cinnabar | O <15; Si <5; Al <5; Ca <5; Mg <5; Ag <5; Cu <5; Fe <6; Pb <5; Au <3; Sb <4; Te <4; Se <4; Bi <5; As <5 |  |
+| Ag/Ag-Hg bearing Tetrahedrite (Fe) | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <5; Au <3; Bi <6; Te <4; Se <4; Fe <12; Zn <12 | Sb dominant over As, Tetrahedrite ratio |
+| Tetrahedrite-(Fe) | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <5; Au <3; Bi <6; Te <4; Se <4; Ag <2; Hg <3; Zn <2 | Sb dominant over As, Tetrahedrite ratio |
+| Andorite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Fe <4; Au <3; Hg <4; Bi <6; As <5; Te <4; Se <4 |  |
+| Zn-bearing Tetrahedrite | O <15; Si <5; Al <5; Ca <5; Mg <5; Pb <5; Au <3; Bi <6; Te <4; Se <4; Ag <2; Hg <3 | Sb dominant over As, Tetrahedrite ratio |
+| Bournonite | O <15; Si <5; Al <5; Ca <5; Mg <5; Ag <4; Fe <4; Au <3; Hg <4; Bi <6; As <5; Te <4; Se <4 |  |
+| Pyrargyrite | O <15; Si <5; Al <5; Ca <5; Mg <5; Cu <4; Pb <4; Fe <5; Au <3; Hg <5; Bi <5; Te <4; Se <4 | Sb dominant over As, Pyrargyrite ratio |
+
+### Association caps
+
+| Category | Additional element caps (wt.%) | Ratio checks |
+| --- | --- | --- |
+| Gudmundite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <8; Pb <5; Ag <4; Au <4; Hg <10 |  |
+| Aurostibite-Asso | As <12; Bi <30; Te <8; Se <8; Ag <25; Cu <25; Pb <30; Hg <20; Fe <65 | Aurostibite association ratio |
+| Stibnite-Asso | As <12; Bi <30; Te <8; Se <8; Fe <7; Cu <8; Pb <5; Ag <4; Au <4; Hg <10 |  |
+| Boulangerite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <3; Ag <2; Fe <12; Au <4; Hg <10 |  |
+| Cupropolybasite-Asso | As <12; Bi <30; Te <8; Se <8; Pb <5; Fe <25; Au <4; Hg <10 | Sb dominant over As, Cupropolybasite ratio |
+| Cinnabar-Asso | As <12; Bi <30; Te <8; Se <8; Ag <8; Cu <15; Pb <20; Fe <35; Au <4; Sb <10 |  |
+| Andorite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <3; Fe <25; Au <4; Hg <10 |  |
+| Tetrahedrite-(Fe)-Asso | As <12; Bi <30; Te <8; Se <8; Ag <4; Pb <5; Zn <15; Hg <10; Au <4 |  |
+| Bournonite-Asso | As <12; Bi <30; Te <8; Se <8; Ag <2; Fe <25; Au <4; Hg <10 |  |
+| Pyrargyrite-Asso | As <12; Bi <30; Te <8; Se <8; Cu <5; Pb <5; Fe <30; Hg <10; Au <4 | Sb dominant over As, Pyrargyrite association ratio |
+
+## Validation performed
+
+Twelve unittest cases cover all 22 named examples; independently transcribed
+primary ranges and endpoints; all W/La and size boundaries; leftover precedence;
+Ag/Zn tetrahedrite boundaries; representative competing-mineral cases;
+ambiguity handling; invalid data; all output categories and sheet names;
+blank Summary totals; input-file hashes; unique output naming; empty inputs;
+required columns; and execution through the existing app runner with GUI
+selections mocked. These are software checks, not validation on real lab data.

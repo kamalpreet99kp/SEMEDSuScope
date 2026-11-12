@@ -11,11 +11,14 @@ bytes; no processing or mineralogical logic was edited during synchronization.
 - `SHA256-MANIFEST.txt`: exact supplied manifest, also copied to repository root.
 - `Summary_Each_Sample.pre-handoff.py`: separately preserved working version
   from before this synchronization. It contains the summary formatting changes
-  tested in this conversation. It is not the active authoritative ZIP version.
+  tested in this conversation. The user subsequently explicitly restored it as
+  the active, authoritative Summary_Each_Sample.py.
 
 The ZIP's Summary_Each_Sample.py is 399 lines and lacks those later formatting
-changes. The user's latest instruction makes the ZIP authoritative; do not
-silently reactivate or merge the preserved version.
+changes. The user's subsequent instruction makes the tested enhanced Summary
+authoritative instead. Keep the original ZIP unchanged for provenance; never
+revert the active Summary to the archive version. See CURRENT-SCRIPTS-SHA256.txt
+for active source hashes after authorized changes.
 
 ## Verification
 
